@@ -70,3 +70,22 @@ export const VOLUME_SERIES = [
   { day: "Jul 4", opened: 37, resolved: 41 },
   { day: "Jul 5", opened: 44, resolved: 39 },
 ];
+
+// Demo 14-day median first-response time (minutes) for the response-time area
+// chart. Dashboard config, not fetched row data.
+export const RESPONSE_SERIES = [
+  { day: "Jun 22", minutes: 4.2 },
+  { day: "Jun 23", minutes: 3.8 },
+  { day: "Jun 24", minutes: 4.6 },
+  { day: "Jun 25", minutes: 3.1 },
+  { day: "Jun 26", minutes: 2.7 },
+  { day: "Jun 27", minutes: 3.4 },
+  { day: "Jun 28", minutes: 5.1 },
+  { day: "Jun 29", minutes: 3.9 },
+  { day: "Jun 30", minutes: 2.9 },
+  { day: "Jul 1", minutes: 2.4 },
+  { day: "Jul 2", minutes: 2.8 },
+  { day: "Jul 3", minutes: 3.2 },
+  { day: "Jul 4", minutes: 2.6 },
+  { day: "Jul 5", minutes: 2.2 },
+];
