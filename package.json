@@ -13,7 +13,7 @@
     "db:new": "geiger-orm create"
   },
   "dependencies": {
-    "@geiger/orm": "github:bhargavjoshi1237/geiger-orm#main",
+    "@geiger/orm": "github:bhargavjoshi1237/geiger-orm#master",
     "@geiger/ui": "github:bhargavjoshi1237/geiger-ui#master",
     "@radix-ui/react-slider": "^1.4.2",
     "@radix-ui/react-switch": "^1.3.2",
