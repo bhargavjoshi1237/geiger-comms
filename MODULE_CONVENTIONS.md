@@ -21,8 +21,8 @@ and the shared kit (`components/internal/shared`).
 | Data layer (per area) | `lib/supabase/<area>.js` | `list*/get*/create*/update*/softDelete*`, `normalize*/toRow` |
 | Media/storage | `lib/supabase/storage.js` | `products` bucket, `events/<id>/` prefix, public URL persisted |
 | Signed-in user | `lib/supabase/user.js` | `getUser()` → stamps `created_by` / RLS ownership |
-| SQL (when persisted) | `supabase/sqls/*.sql` | `flow_*` tables, idempotent + self-contained DDL |
-| Migration runner | `scripts/run-sqls.js` (`npm run db:push`) | `pg` over `STRING_URI`, runs `supabase/sqls/*` in order |
+| SQL (when persisted) | `supabase/migrations/<ts>_<name>.sql` | `flow_*` tables, idempotent + self-contained DDL |
+| Migrations | `@geiger/orm` (`npm run db:push`) | timestamped `@up`/`@down` SQL, ledgered in `<schema>.geiger_migrations` |
 | Environment | `.env` | `NEXT_PUBLIC_SUPABASE_URL`/`_ANON_KEY` (runtime), `STRING_URI` (migrations) |
 
 Files use snake_case names; React components are PascalCase; permission keys are
@@ -90,11 +90,12 @@ in `events/all_events.jsx`. (`all_events.jsx` still carries a legacy
   anon client, `fetch` wrapped for activity tracking. Every data-layer call first
   checks `isSupabaseConfigured()` (both `NEXT_PUBLIC_SUPABASE_URL` and
   `_ANON_KEY` present); missing env degrades to "no DB", never crashes.
-- **Migrations (Node):** `scripts/run-sqls.js` opens a `pg` client over
-  `STRING_URI` (direct Postgres, **server-only**, never `NEXT_PUBLIC_`). Run with
-  `npm run db:push`; it executes `supabase/sqls/*.sql` in filename order. `--clean`
-  drops **only this app's own table** — the Supabase project is **shared across
-  the suite**, so never drop all `flow_*` tables.
+- **Migrations (Node):** `@geiger/orm` connects over `STRING_URI` (direct Postgres,
+  **server-only**, never `NEXT_PUBLIC_`). `npm run db:push` applies every pending
+  `supabase/migrations/<timestamp>_<name>.sql` in timestamp order and records it in
+  `<schema>.geiger_migrations`; applied files are skipped. `npm run db:rollback`
+  undoes the last push. The Supabase project is **shared across the suite**, so each
+  app keeps its ledger in its own schema.
 
 ### Data-layer module shape (`lib/supabase/<area>.js`)
 
@@ -132,7 +133,7 @@ Fetch from the data layer; there is no static seed:
 5. Stamp `createdBy` from `getUser()` (`lib/supabase/user.js`) so storage RLS
    lets only the owner upload that entity's media.
 
-### SQL / DDL (`supabase/sqls/<area>.sql`)
+### SQL / DDL (`supabase/migrations/<timestamp>_<area>.sql`)
 
 - Tables are **`flow_*`** (suite-shared schema). Standard columns:
   `id uuid primary key default gen_random_uuid()`,

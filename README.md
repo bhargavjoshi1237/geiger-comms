@@ -96,7 +96,7 @@ components/
   ui/                    shadcn primitives
 lib/supabase/            Data-access layer (comms)
 supabase/sqls/           Idempotent SQL schema and policies
-scripts/run-sqls.js      Migration runner (npm run db:push)
+supabase/migrations/     Timestamped @up/@down migrations (npm run db:push)
 ```
 
 ## Conventions

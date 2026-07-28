@@ -100,7 +100,7 @@ Same principles, different layout — keep these straight when reading flow's
 | Client wrapper | `flowClient()` = `createClient().schema("flow")` | `schemaClient()` = `createClient().schema("<schema>")` (see §1) |
 | Data layer | `features/<module>/actions.js` | `lib/supabase/<area>.js` |
 | Config guard | (always configured) | **`isSupabaseConfigured()`** — guards against a missing env so calls return `null`/`[]`/`false` instead of crashing; the screen then renders an empty state (it does **not** fall back to static sample data) |
-| SQL | `supabase/migrations/NNNN_*.sql` | `supabase/sqls/*.sql` (idempotent), run via `npm run db:push` |
+| SQL | `supabase/migrations/<ts>_*.sql` | `supabase/migrations/<ts>_*.sql` (@up/@down), run via `npm run db:push` |
 
 The headline difference: the **data layer is the source of truth** — screens fetch
 their rows from it, they do **not** seed from a static in-file array. Every action
@@ -119,7 +119,7 @@ then **empty** state, never bundled sample data.
 | Data-access layer (one per area) | `lib/supabase/<area>.js` | `list*/get*/create*/update*/softDelete*`, `normalize*`, `toRow` |
 | Storage helpers | `lib/supabase/storage.js` | `uploadEventImage`, `buildPublicUrl`, `eventMediaPrefix` |
 | SQL schema / policies | `supabase/sqls/<area>.sql` | plain, **idempotent** DDL |
-| Migration runner | `scripts/run-sqls.js` (`npm run db:push`) | runs `supabase/sqls/*` in order |
+| Migration runner | `@geiger/orm` (`npm run db:push`) | runs `supabase/sqls/*` in order |
 
 Files use snake_case names; React components are PascalCase; all imports use the
 `@/` root alias.
@@ -306,7 +306,8 @@ its own RLS.
 
 ## 7. SQL & migrations
 
-- One file per area under `supabase/sqls/<area>.sql`, **self-contained and
+- One migration per change under `supabase/migrations/<timestamp>_<name>.sql`,
+  written as `-- @up` / `-- @down` sections, **self-contained and
   idempotent**: `create schema if not exists <schema>;`, `create … if not exists`,
   `create or replace function`, `alter table … add column if not exists`, and
   `drop policy if exists` before `create policy`.
@@ -314,8 +315,10 @@ its own RLS.
   on `<schema>.*`); foreign-key the shared tables from `public`
   (`references public.users(id)` / `public.project(id)`).
 - Reuse the shared `public.flow_touch_updated_at()` trigger for `updated_at`.
-- Run with `npm run db:push` (`scripts/run-sqls.js`) — it executes
-  `supabase/sqls/*` in order. Add an area → drop in `<area>.sql` and re-run.
+- Scaffold with `npm run db:new -- <name> --template table --table <t>`, apply with
+  `npm run db:push` (@geiger/orm). Pending migrations run in timestamp order and are
+  recorded in `<schema>.geiger_migrations`, so a re-run is a no-op. `npm run db:status`
+  lists applied vs pending; `npm run db:rollback` undoes the last push via `@down`.
 - RLS is enabled; the demo policy currently grants open `anon`/`authenticated`
   access. When auth lands, replace it with an organization-scoped policy and drop
   the open one.
@@ -356,7 +359,7 @@ sample-data fallback — an unconfigured/empty DB renders the empty state.
 
 ## 9. New-area checklist
 
-1. **SQL:** `supabase/sqls/<area>.sql` — `create schema if not exists <schema>;`,
+1. **SQL:** `npm run db:new -- <area> --template table --table <t>` — `create schema if not exists <schema>;`,
    table in the **product's schema** (`<schema>.<name>`, no `flow_` prefix),
    indexes, `updated_at` trigger, `metadata jsonb` bag, RLS, FKs to `public.users`/
    `public.project`. Run `npm run db:push`.

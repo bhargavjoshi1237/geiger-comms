@@ -5,12 +5,13 @@ import { SidebarProvider, SidebarInset } from "@geiger/ui";
 import { AppSidebar } from "@/components/internal/sidebar/sidebar";
 import { Topbar } from "@/components/internal/topbar/topbar";
 import { ActiveScreen } from "@/components/internal/screens/registry";
+import { DEFAULT_TAB } from "@/lib/hooks/use-workspace-url";
 
 // Live, embeddable copy of the Comms workspace for the landing playground. Tab
 // lives in local state (no URL, no project) — a throwaway, fully interactive
 // instance. Fills its container (h-full) instead of the viewport.
 export function CommsPlayground() {
-  const [currentTab, setCurrentTab] = useState("Inbox");
+  const [currentTab, setCurrentTab] = useState(DEFAULT_TAB);
 
   return (
     <div className="flex flex-col h-full w-full bg-background text-foreground font-sans overflow-hidden selection:bg-surface-strong">
