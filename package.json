@@ -10,7 +10,8 @@
     "db:push": "geiger-orm push",
     "db:status": "geiger-orm status",
     "db:rollback": "geiger-orm rollback",
-    "db:new": "geiger-orm create"
+    "db:new": "geiger-orm create",
+    "db:seed": "geiger-orm seed"
   },
   "dependencies": {
     "@geiger/orm": "github:bhargavjoshi1237/geiger-orm#master",

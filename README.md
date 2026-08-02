@@ -70,11 +70,18 @@ STRING_URI=your-direct-postgres-connection-string    # migrations only
 
 ### Database
 
-Idempotent SQL lives in `supabase/sqls/` and runs in filename order:
+Schema changes are timestamped SQL migrations in `supabase/migrations/`, applied
+in version order by [`@geiger/orm`](https://github.com/bhargavjoshi1237/geiger-orm)
+and recorded in `comms.geiger_migrations`:
 
 ```bash
-npm run db:push
+npm run db:status                     # applied vs pending
+npm run db:new -- <name>              # scaffold a migration
+npm run db:push                       # apply everything pending
+npm run db:seed                       # re-runnable data
 ```
+
+See [`MIGRATION_CONVENTIONS.md`](MIGRATION_CONVENTIONS.md) before writing any DDL.
 
 ### Develop
 
@@ -95,7 +102,6 @@ components/
   internal/shared/       Shared screen kit (headers, tables, stats, dialogs)
   ui/                    shadcn primitives
 lib/supabase/            Data-access layer (comms)
-supabase/sqls/           Idempotent SQL schema and policies
 supabase/migrations/     Timestamped @up/@down migrations (npm run db:push)
 ```
 
@@ -106,6 +112,7 @@ This codebase follows a consistent set of patterns. Read these before contributi
 - [`AGENTS.md`](AGENTS.md) — working notes for this Next.js version
 - [`MODULE_CONVENTIONS.md`](MODULE_CONVENTIONS.md) — how to build a workspace screen
 - [`SUPABASE_CONVENTIONS.md`](SUPABASE_CONVENTIONS.md) — the data-layer playbook
+- [`MIGRATION_CONVENTIONS.md`](MIGRATION_CONVENTIONS.md) — schema changes and `@geiger/orm`
 - [`crafting.md`](crafting.md) — UI craft and quality bar
 
 ## The Geiger suite
