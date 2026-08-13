@@ -15,9 +15,8 @@ import {
 } from "@geiger/ui";
 import { ChevronDown, Search, MoreVertical, PanelLeft, Bell, HelpCircle, X } from "lucide-react";
 import { SidebarOption } from "./sidebar_option";
-import { workspaceNav } from "./sidebar_nav";
 import { NotificationsDropdown } from "../topbar/dialogue/notifications_dropdown";
-import { roleHasPermission, tabPermissionKey } from "@/lib/rbac";
+import { useVisibleNav } from "@/lib/hooks/use-visible-nav";
 import { Button } from "@geiger/ui";
 
 function MobileSidebarHeader() {
@@ -50,18 +49,20 @@ function MobileSidebarHeader() {
   );
 }
 
+// Stable default so the nav memo isn't invalidated on every render.
+const NO_ROLES = [];
+
 export function AppSidebar({
   activeTab = "Overview",
   onTabChange = () => {},
   roleId = "workspace_owner",
-  roles = [],
+  roles = NO_ROLES,
 }) {
   const { toggleSidebar } = useSidebar();
   const [expandedItems, setExpandedItems] = React.useState({});
 
-  const visibleNav = workspaceNav.filter((item) =>
-    roleHasPermission(roles, roleId, tabPermissionKey(item.title)),
-  );
+  // Role-granted sections, minus the ones this user hid in Settings → Navigation.
+  const visibleNav = useVisibleNav(roles, roleId);
 
   const toggleExpand = (title) => {
     setExpandedItems((prev) => ({

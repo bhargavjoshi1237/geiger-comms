@@ -1,6 +1,7 @@
 "use client";
 
 import { ComingSoonScreen } from "./coming_soon";
+import { NavigationSettingsScreen } from "./settings/navigation_settings";
 import { workspaceNav } from "@/components/internal/sidebar/sidebar_nav";
 
 // Resolves the nav item (top-level or sub) for a title, for ComingSoon labels.
@@ -13,15 +14,23 @@ function findNavItem(title) {
   return null;
 }
 
-// Renders the workspace screen for the active tab. Add one static case per
-// registered screen so screen identity stays stable across renders; unregistered
-// titles fall back to ComingSoon. No screens are registered yet.
+// Titles with a dedicated screen. One static case per entry below so screen
+// identity stays stable across renders; unregistered titles fall back to
+// ComingSoon.
+const REGISTERED = new Set(["Navigation"]);
+
 export function ActiveScreen({ tab }) {
-  const item = findNavItem(tab) || { title: tab };
-  return <ComingSoonScreen title={item.title} icon={item.icon} />;
+  switch (tab) {
+    case "Navigation":
+      return <NavigationSettingsScreen />;
+    default: {
+      const item = findNavItem(tab) || { title: tab };
+      return <ComingSoonScreen title={item.title} icon={item.icon} />;
+    }
+  }
 }
 
 // Whether a title has a dedicated screen (used to gate nav, not to render).
-export function hasScreen() {
-  return false;
+export function hasScreen(title) {
+  return REGISTERED.has(title);
 }

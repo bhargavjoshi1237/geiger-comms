@@ -264,6 +264,9 @@ export const workspaceNav = [
     icon: Settings,
     subItems: [
       { title: "General", icon: SlidersHorizontal },
+      // Personal sidebar curation. Locked in geiger-ui.config.js — it is the
+      // screen that unhides everything else.
+      { title: "Navigation", icon: ListFilter },
       { title: "Brands", icon: Building2 }, // B — multi-brand
       { title: "Teammates", icon: UserCog }, // A
       { title: "Roles & Permissions", icon: ShieldCheck }, // B — custom roles

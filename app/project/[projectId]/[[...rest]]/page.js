@@ -12,6 +12,7 @@ import {
   useProject,
   pickDefaultProjectId,
 } from "@/context/project-context";
+import { NavVisibilityProvider } from "@/context/nav-visibility-context";
 import {
   LoadingArea,
   NoProjectState,
@@ -74,7 +75,11 @@ export default function ProjectWorkspacePage() {
       }
     >
       <ProjectProvider>
-        <WorkspaceContent />
+        {/* Sidebar curation is per (project, user), so it sits inside the
+            project provider and above every surface that lists destinations. */}
+        <NavVisibilityProvider>
+          <WorkspaceContent />
+        </NavVisibilityProvider>
       </ProjectProvider>
     </Suspense>
   );

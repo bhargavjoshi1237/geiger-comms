@@ -195,3 +195,9 @@ export function useProject() {
   }
   return ctx;
 }
+
+// Project-or-nothing, for trees rendered outside the workspace (the landing
+// playground has no project) so shared components stay safe to call anywhere.
+export function useOptionalProject() {
+  return useContext(ProjectContext) ?? null;
+}
