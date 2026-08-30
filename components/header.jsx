@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Inbox } from "lucide-react";
+import Image from "next/image";
+import { ThemeToggle } from "@geiger/ui";
 import { getUser } from "@/lib/supabase/user";
 import { ProfileDropdown } from "@/components/internal/topbar/dialogue/profile_dropdown";
 import { SuiteMegaMenu } from "@/components/landing/suite-mega-menu";
 
-// Marketing header. Resolves the shared suite session (getUser) and shows the
-// profile dropdown when signed in, else a Sign In link.
+// Marketing header, shared suite pattern (see geiger-dash/geiger-events):
+// studio logo + wordmark over the mega menu, with the @geiger/ui ThemeToggle
+// and the signed-in profile dropdown (or Sign In) on the right.
 export function Header({ dashboardHref = "/project" }) {
   const [user, setUser] = useState(null);
   const [resolved, setResolved] = useState(false);
@@ -27,17 +29,24 @@ export function Header({ dashboardHref = "/project" }) {
     <header className="fixed left-0 right-0 top-0 z-50 border-b border-border bg-background md:border-border/50 md:bg-background/85 md:backdrop-blur-md">
       <div className="relative mx-auto flex h-12 w-full max-w-6xl items-center justify-between px-4 sm:px-6">
         <Link href="/" className="flex min-w-0 items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-surface-subtle">
-            <Inbox className="h-4 w-4 text-foreground" />
+          <div className="flex h-8 w-8 items-center justify-center">
+            <Image
+              src={`${process.env.NEXT_PUBLIC_BASE_PATH || ""}/logo1.svg`}
+              alt="Logo"
+              width={20}
+              height={20}
+              className="h-5 w-5"
+            />
           </div>
-          <span className="truncate bg-gradient-to-r from-zinc-100 to-zinc-400 bg-clip-text text-sm font-bold tracking-tight text-transparent">
-            Geiger Comms
+          <span className="truncate bg-gradient-to-r from-zinc-100 to-zinc-400 bg-clip-text text-sm font-bold tracking-tight text-transparent sm:text-sm">
+            Geiger Studios
           </span>
         </Link>
 
         <SuiteMegaMenu />
 
         <div className="hidden items-center gap-4 md:flex">
+          <ThemeToggle />
           {user ? (
             <ProfileDropdown />
           ) : resolved ? (

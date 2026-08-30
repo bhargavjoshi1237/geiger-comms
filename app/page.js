@@ -104,7 +104,7 @@ const faqs = [
 ];
 
 export default function CommsLandingPage() {
-  const dashboardHref = "/org";
+  const dashboardHref = "/project";
   const showcaseBg = pickRandomShowcaseBackground();
 
   return (
@@ -178,7 +178,7 @@ export default function CommsLandingPage() {
 
         <section className="relative z-20 overflow-hidden px-4 py-16 sm:px-6 sm:py-24 lg:py-32">
           <div className="container mx-auto relative z-10 flex flex-col items-center text-center">
-            <h3 className="mb-4 text-xs font-semibold tracking-widest text-foreground0 uppercase sm:text-sm">
+            <h3 className="mb-4 text-xs font-semibold tracking-widest text-muted-foreground uppercase sm:text-sm">
               Open source from day one
             </h3>
             <h2 className="mb-8 bg-gradient-to-b from-white to-zinc-500 bg-clip-text text-3xl font-black tracking-tighter text-transparent drop-shadow-lg sm:mb-10 sm:text-5xl lg:text-6xl">

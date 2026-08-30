@@ -18,7 +18,7 @@ export function ComingSoonScreen({ title = "Screen", description, icon }) {
         title={title}
         description={
           description ||
-          `The ${title} screen is part of the Geiger Events roadmap and will be built out next.`
+          `The ${title} screen is part of the Geiger Comms roadmap and will be built out next.`
         }
       />
 

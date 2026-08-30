@@ -1,6 +1,7 @@
 "use client";
 
-import React from "react";
+import React, { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Search,
   Bell,
@@ -9,11 +10,34 @@ import {
 import { Button } from "@geiger/ui";
 import { Kbd, KbdGroup } from "@geiger/ui";
 import { SidebarTrigger } from "@geiger/ui";
+import { CommandPalette } from "@geiger/ui";
 import { NotificationsDropdown } from "./dialogue/notifications_dropdown";
 import { ProfileDropdown } from "./dialogue/profile_dropdown";
 import { SupabaseActivityLine } from "./supabase_activity_line";
+import { workspaceNav } from "@/components/internal/sidebar/sidebar_nav";
+import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
 
+// Global search (sidebar audit §7): the palette lives in the shell — no nav
+// entry. The suite's CommandPalette flattens the same nav tree the sidebar
+// renders and fuzzy-matches it; this component owns the ⌘K wiring.
 export function Topbar() {
+  const router = useRouter();
+  const { setTab } = useWorkspaceUrl();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  const openSearch = useCallback(() => setPaletteOpen(true), []);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <header className="relative h-14 px-4 flex items-center justify-between border-b border-border bg-topbar-bg text-foreground z-20 w-full shrink-0">
       <div className="flex items-center gap-1.5">
@@ -49,7 +73,11 @@ export function Topbar() {
 
       <div className="flex justify-between gap-4 md:gap-8 sm:mr-2">
         <div className="flex items-center gap-2 sm:gap-3">
-          <Button variant="ghost" className="relative hidden items-center bg-surface-active border border-border hover:border-border-strong transition-colors rounded-md h-8 px-2 sm:flex sm:px-2.5 w-8 sm:w-[240px] justify-center sm:justify-start text-sm text-muted-foreground shadow-sm group">
+          <Button
+            variant="ghost"
+            onClick={openSearch}
+            className="relative hidden items-center bg-surface-active border border-border hover:border-border-strong transition-colors rounded-md h-8 px-2 sm:flex sm:px-2.5 w-8 sm:w-[240px] justify-center sm:justify-start text-sm text-muted-foreground shadow-sm group"
+          >
             <Search className="w-4 h-4 sm:mr-2 text-muted-foreground group-hover:text-foreground transition-colors" />
             <span className="hidden sm:inline-block text-muted-foreground group-hover:text-foreground transition-colors">
               Search...
@@ -80,6 +108,15 @@ export function Topbar() {
         </div>
       </div>
       <SupabaseActivityLine />
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        nav={workspaceNav}
+        onSelect={(entry) => {
+          const title = typeof entry === "string" ? entry : entry?.title;
+          if (title) setTab(title);
+        }}
+      />
     </header>
   );
 }

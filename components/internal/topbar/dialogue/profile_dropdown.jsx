@@ -216,7 +216,7 @@ export function ProfileDropdown({ children }) {
 
         <div className="px-4 py-2.5 border-t border-border">
           <div className="flex items-center justify-between text-[11px] text-text-secondary">
-            <span>Events v1.0.0</span>
+            <span>Comms v1.0.0</span>
             <span className="flex items-center gap-1">
               <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
               Online

@@ -26,53 +26,11 @@ export default defineNavConfig({
       requires: ["All Conversations"],
       reason: "A view is a saved filter over the conversation queue.",
     },
-    { screen: "Side Conversations", requires: ["All Conversations"] },
-    { screen: "Spam", requires: ["All Conversations"] },
-    {
-      screen: "Back-office Tickets",
-      requires: ["Tickets"],
-      reason: "Back-office work is tracked as a ticket type.",
-    },
-    { screen: "Tracker Tickets", requires: ["Tickets"] },
+    { screen: "Your Inbox", requires: ["All Conversations"] },
+    { screen: "Mentions", requires: ["All Conversations"] },
 
-    // Channels — the Messenger is the surface live chat runs inside.
-    {
-      screen: "Messenger",
-      requires: ["Live Chat"],
-      reason: "The Messenger widget hosts the live chat session.",
-    },
-
-    // Voice & IVR — call features hang off calls, IVR features off the flows.
-    { screen: "IVR Routing", requires: ["IVR Flows"] },
-    { screen: "Voice Recognition", requires: ["IVR Flows"] },
-    { screen: "Text-to-Speech", requires: ["IVR Flows"] },
-    { screen: "Callbacks", requires: ["Calls"] },
-    { screen: "Voicemail", requires: ["Calls"] },
-    { screen: "Call Recordings", requires: ["Calls"] },
-    {
-      screen: "Call Transcripts",
-      requires: ["Call Recordings"],
-      reason: "Transcripts are produced from the call recording.",
-    },
-
-    // Customers — People is the hub; the rest are lenses and actions on it.
-    {
-      screen: "Unified Timeline",
-      requires: ["People"],
-      reason: "The timeline is one customer's history end to end.",
-    },
+    // Customers — People is the hub; segments are a lens on it.
     { screen: "Segments", requires: ["People"] },
-    { screen: "Health Scores", requires: ["People"] },
-    { screen: "Order History", requires: ["People"] },
-    {
-      screen: "Order Actions",
-      requires: ["Order History"],
-      reason: "Refunds and cancellations act on an order in the history.",
-    },
-
-    // Automation — routing and approvals are layers on the base surfaces.
-    { screen: "Skills-based Routing", requires: ["Routing Rules"] },
-    { screen: "Approval Workflows", requires: ["Workflows"] },
 
     // AI Agent — Train is the lifecycle hub; the agent answers from the KB.
     {
@@ -85,6 +43,11 @@ export default defineNavConfig({
     { screen: "Testing & Regression", requires: ["Playground"] },
     { screen: "Evaluations", requires: ["Testing & Regression"] },
     { screen: "Guardrails", requires: ["Train"] },
+    {
+      screen: "Deployment",
+      requires: ["Testing & Regression"],
+      reason: "An agent goes live from a tested build.",
+    },
     { screen: "Versions", requires: ["Train"] },
 
     // AI Performance reports on the agent that produces the numbers.
@@ -103,13 +66,16 @@ export default defineNavConfig({
 
     // Knowledge Base — Articles is the content, help centers are the sites.
     { screen: "Help Centers", requires: ["Articles"] },
-    { screen: "Translations", requires: ["Articles"] },
+    {
+      screen: "Knowledge Gaps",
+      requires: ["Articles"],
+      reason: "A gap is closed by writing the article that fills it.",
+    },
     {
       screen: "Customer Portal",
       requires: ["Help Centers"],
       reason: "The portal is served from a help center.",
     },
-    { screen: "Community Forum", requires: ["Help Centers"] },
 
     // Proactive messages target the audience segments in Customers.
     {
@@ -120,12 +86,10 @@ export default defineNavConfig({
 
     // Reports read from the areas that generate the data.
     { screen: "Custom Dashboards", requires: ["Analytics"] },
-    { screen: "SLA Compliance", requires: ["SLA Policies"] },
-    { screen: "Channel Performance", requires: ["Channels"] },
     {
-      screen: "Quality Assurance",
-      requires: ["CSAT & Quality"],
-      reason: "QA scores are graded against the satisfaction signal.",
+      screen: "Quality & CSAT",
+      requires: ["All Conversations"],
+      reason: "Scores and satisfaction are graded on the conversations.",
     },
 
     // Integrations — MCP is how the agent reaches external tools.

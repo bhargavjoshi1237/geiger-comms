@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { ArrowDownRight, ArrowUpRight, Search } from "lucide-react";
+import React from "react";
+import { Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@geiger/ui";
@@ -15,6 +15,11 @@ import {
   TableHeader,
   TableRow,
 } from "@geiger/ui";
+
+// Stat/KPI primitives (StatGrid, StatTile, RollingNumber, StatsBar) come straight
+// from @geiger/ui — it already owns the odometer animation and card styling, so
+// this screen kit doesn't duplicate it.
+export { StatGrid, StatTile, RollingNumber, StatsBar } from "@geiger/ui";
 
 /**
  * Shared building blocks for internal feature screens. They reproduce the
@@ -77,192 +82,6 @@ export function EditorSectionHeader({ title, description, action, className }) {
         <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div>
       ) : null}
     </div>
-  );
-}
-
-// --- KPI tiles ---------------------------------------------------------------
-
-export function StatGrid({ stats, columns = 4, className }) {
-  const colClass =
-    {
-      2: "sm:grid-cols-2",
-      3: "sm:grid-cols-3",
-      4: "grid-cols-2 lg:grid-cols-4",
-      5: "grid-cols-2 lg:grid-cols-5",
-    }[columns] || "grid-cols-2 lg:grid-cols-4";
-
-  return (
-    <div className={cn("grid gap-4", colClass, className)}>
-      {stats.map((stat) => (
-        <StatTile key={stat.label} {...stat} />
-      ))}
-    </div>
-  );
-}
-
-export function StatTile({ label, value, delta, trend, hint, icon: Icon }) {
-  const trendClass =
-    trend === "up"
-      ? "text-emerald-400"
-      : trend === "down"
-        ? "text-red-400"
-        : "text-text-secondary";
-
-  return (
-    <Card className="rounded-xl border-border bg-surface-subtle py-0 text-foreground capitalize">
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between">
-          <span className="text-[11px] font-medium uppercase tracking-wider text-text-secondary">
-            {label}
-          </span>
-          {Icon ? <Icon className="h-4 w-4 text-text-tertiary" /> : null}
-        </div>
-        <div className="mt-2 flex items-end gap-2">
-          <span className="text-2xl font-bold leading-none text-white tabular-nums">
-            {value}
-          </span>
-          {delta ? (
-            <span className={cn("mb-0.5 text-xs font-medium", trendClass)}>
-              {delta}
-            </span>
-          ) : null}
-        </div>
-        {hint ? (
-          <span className="mt-1.5 block text-[11px] text-text-tertiary">{hint}</span>
-        ) : null}
-      </CardContent>
-    </Card>
-  );
-}
-
-// --- Rolling odometer number -------------------------------------------------
-
-const ROLL_DIGITS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-
-// A single odometer digit: a vertical 0–9 strip that slides to the target.
-// Starts at 0 and rolls up once `active` flips true (on mount).
-function RollingDigit({ digit, active, delay }) {
-  return (
-    <span className="relative inline-block h-[1em] w-[1ch] overflow-hidden align-baseline">
-      <span
-        className="absolute inset-x-0 top-0 flex flex-col transition-transform duration-[900ms] ease-out"
-        style={{
-          transform: `translateY(-${(active ? digit : 0) * 10}%)`,
-          transitionDelay: `${delay}ms`,
-        }}
-      >
-        {ROLL_DIGITS.map((n) => (
-          <span key={n} className="flex h-[1em] items-center justify-center leading-none">
-            {n}
-          </span>
-        ))}
-      </span>
-    </span>
-  );
-}
-
-// Renders a formatted value (e.g. "$24,860") with each digit animated as a
-// rolling odometer; prefixes/separators like "$" and "," stay static.
-export function RollingNumber({ value, className }) {
-  const [active, setActive] = useState(false);
-
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setActive(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
-
-  const chars = String(value).split("");
-  // Per-digit stagger delay = number of digits before this index (no mutation).
-  const digitDelay = (idx) =>
-    chars.slice(0, idx).filter((c) => /\d/.test(c)).length * 70;
-
-  return (
-    <span className={cn("inline-flex tabular-nums", className)}>
-      {chars.map((char, i) =>
-        /\d/.test(char) ? (
-          <RollingDigit
-            key={i}
-            digit={Number(char)}
-            active={active}
-            delay={digitDelay(i)}
-          />
-        ) : (
-          <span key={i}>{char}</span>
-        ),
-      )}
-    </span>
-  );
-}
-
-// --- Stats bar (unified KPI row) ---------------------------------------------
-
-const STATS_BAR_COLS = {
-  2: "grid-cols-2",
-  3: "grid-cols-2 md:grid-cols-3",
-  4: "grid-cols-2 md:grid-cols-4",
-};
-
-/**
- * Single-card KPI row with divider-separated cells and animated values, as on
- * the Events Overview screen. Each stat: { label, value, delta?, trend?, footer? }.
- */
-export function StatsBar({ stats, columns = 4, className }) {
-  const cols = STATS_BAR_COLS[columns] || STATS_BAR_COLS[4];
-
-  return (
-    <Card
-      className={cn(
-        "gap-0 overflow-hidden rounded-xl border-border bg-surface-subtle py-0 text-foreground",
-        className,
-      )}
-    >
-      <CardContent className="p-0">
-        <div className={cn("grid", cols)}>
-          {stats.map((stat, i) => {
-            const up = stat.trend === "up";
-            const TrendIcon = up ? ArrowUpRight : ArrowDownRight;
-            return (
-              <div
-                key={stat.label}
-                className={cn(
-                  "p-4",
-                  i % 2 !== 0 && "border-l border-border",
-                  i >= 2 && "border-t border-border",
-                  "md:border-t-0 md:border-l md:border-border",
-                  i === 0 && "md:border-l-0",
-                )}
-              >
-                <span className="text-[11px] font-medium uppercase tracking-wider text-text-secondary">
-                  {stat.label}
-                </span>
-                <div className="mt-1 flex items-end gap-2">
-                  <RollingNumber
-                    value={stat.value}
-                    className="text-2xl font-bold leading-none text-white"
-                  />
-                  {stat.delta ? (
-                    <span
-                      className={cn(
-                        "mb-0.5 inline-flex items-center gap-0.5 text-xs font-medium",
-                        up ? "text-emerald-400" : "text-red-400",
-                      )}
-                    >
-                      <TrendIcon className="h-3 w-3" />
-                      {stat.delta}
-                    </span>
-                  ) : null}
-                </div>
-                {stat.footer ? (
-                  <span className="mt-1 block text-[11px] text-text-tertiary">
-                    {stat.footer}
-                  </span>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -447,7 +266,7 @@ export function DataTable({
               {columns.map((col) => (
                 <TableCell
                   key={col.key}
-                  className={cn("px-4 py-", ALIGN_CLASS[col.align], col.className)}
+                  className={cn("px-4 py-3", ALIGN_CLASS[col.align], col.className)}
                 >
                   {col.render ? col.render(row) : row[col.key]}
                 </TableCell>

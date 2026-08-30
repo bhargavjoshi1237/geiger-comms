@@ -7,15 +7,13 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarGroupContent,
   SidebarMenu,
   SidebarRail,
   useSidebar,
 } from "@geiger/ui";
-import { ChevronDown, Search, MoreVertical, PanelLeft, Bell, HelpCircle, X } from "lucide-react";
+import { PanelLeft } from "lucide-react";
 import { SidebarOption } from "./sidebar_option";
-import { NotificationsDropdown } from "../topbar/dialogue/notifications_dropdown";
 import { useVisibleNav } from "@/lib/hooks/use-visible-nav";
 import { Button } from "@geiger/ui";
 
@@ -42,27 +40,23 @@ function MobileSidebarHeader() {
               }}
             />
           </div>
-          <span className="text-foreground font-semibold text-sm">Events</span>
+          <span className="text-foreground font-semibold text-sm">Comms</span>
         </div>
       </div>
     </SidebarHeader>
   );
 }
 
-// Stable default so the nav memo isn't invalidated on every render.
-const NO_ROLES = [];
-
 export function AppSidebar({
   activeTab = "Overview",
   onTabChange = () => {},
-  roleId = "workspace_owner",
-  roles = NO_ROLES,
 }) {
   const { toggleSidebar } = useSidebar();
   const [expandedItems, setExpandedItems] = React.useState({});
 
-  // Role-granted sections, minus the ones this user hid in Settings → Navigation.
-  const visibleNav = useVisibleNav(roles, roleId);
+  // Role-granted sections (via the RBAC provider), minus the ones this user
+  // hid in Settings → Navigation.
+  const visibleNav = useVisibleNav();
 
   const toggleExpand = (title) => {
     setExpandedItems((prev) => ({

@@ -13,16 +13,16 @@ import { isSupabaseConfigured } from "@/lib/supabase/comms";
 import { getUser } from "@/lib/supabase/user";
 import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
 
-// Active-project context for the Events workspace. The whole dashboard is
+// Active-project context for the Comms workspace. The whole dashboard is
 // scoped to one project at a time: every data-layer call is filtered by the
 // active project's id and RLS enforces org membership on top (see
-// supabase/sqls/zz_project_access.sql).
+// comms.can_access_project in supabase/migrations/20260821182908_adopt_rbac.sql).
 //
 // The active project lives in the URL (?project=<uuid>, via useWorkspaceUrl) so
 // a refresh or shared link stays on it; localStorage only remembers the last
 // choice to pre-select it on a fresh visit. Projects themselves are the shared
 // suite entity public.projects — read through a public-schema client (the base
-// client is pinned to the `events` schema), narrowed to the caller's orgs by
+// client is pinned to the `comms` schema), narrowed to the caller's orgs by
 // that table's own RLS.
 
 const ProjectContext = createContext(undefined);
@@ -45,7 +45,7 @@ export function pickDefaultProjectId(projects) {
 }
 
 // A public-schema view of the base client. public.projects / the org bootstrap
-// RPC live outside this app's `events` schema.
+// RPC live outside this app's `comms` schema.
 function publicClient() {
   return createClient().schema("public");
 }

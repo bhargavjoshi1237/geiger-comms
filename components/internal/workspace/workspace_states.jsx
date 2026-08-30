@@ -45,13 +45,13 @@ export function NoProjectState() {
         <EmptyState
           icon={FolderPlus}
           title="Create your first project"
-          description="Events, tickets, registrations, and automations all live inside a project. Create one to get started."
+          description="Conversations, channels, contacts, and automations all live inside a project. Create one to get started."
           action={
             <div className="flex w-full max-w-sm items-center gap-2">
               <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Acme Events"
+                placeholder="e.g. Acme Support"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !saving) create();
                 }}

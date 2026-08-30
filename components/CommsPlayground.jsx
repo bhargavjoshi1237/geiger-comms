@@ -5,6 +5,7 @@ import { SidebarProvider, SidebarInset } from "@geiger/ui";
 import { AppSidebar } from "@/components/internal/sidebar/sidebar";
 import { Topbar } from "@/components/internal/topbar/topbar";
 import { ActiveScreen } from "@/components/internal/screens/registry";
+import { CommsOverviewScreen } from "@/components/internal/screens/overview/comms_overview";
 import { DEFAULT_TAB } from "@/lib/hooks/use-workspace-url";
 
 // Live, embeddable copy of the Comms workspace for the landing playground. Tab
@@ -25,7 +26,13 @@ export function CommsPlayground() {
           <SidebarInset className="flex-1 flex flex-col h-full bg-transparent overflow-hidden relative border-none">
             <div className="absolute top-0 right-0 w-[500px] h-[300px] bg-white/[0.02] blur-[120px] pointer-events-none rounded-full" />
             <main className="flex-1 overflow-y-auto p-4 md:p-8 relative z-10 w-full min-w-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-              <ActiveScreen tab={currentTab} />
+              {currentTab === DEFAULT_TAB ? (
+                // The playground has no project/session, so Overview mounts in
+                // demo mode with its fixed showcase dataset.
+                <CommsOverviewScreen demo />
+              ) : (
+                <ActiveScreen tab={currentTab} />
+              )}
             </main>
           </SidebarInset>
         </div>

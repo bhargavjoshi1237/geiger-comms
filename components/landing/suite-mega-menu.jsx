@@ -49,7 +49,7 @@ const resources = [
 function MenuPanel({ title, children, className = "" }) {
   return (
     <div className={`rounded-xl border border-border bg-surface-subtle p-4 shadow-xl ${className}`}>
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-foreground0">{title}</p>
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-tertiary">{title}</p>
       {children}
     </div>
   );
@@ -81,7 +81,7 @@ export function SuiteMegaMenu() {
                       <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
                       <div className="min-w-0">
                         <p className="text-sm text-foreground">{item.label}</p>
-                        <p className="truncate text-xs text-foreground0">{item.description}</p>
+                        <p className="truncate text-xs text-text-secondary">{item.description}</p>
                       </div>
                     </a>
                   );
@@ -102,7 +102,7 @@ export function SuiteMegaMenu() {
                 {resources.map((item) => (
                   <a href={item.href} key={item.label} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground focus-visible:bg-surface-hover focus-visible:text-foreground focus-visible:outline-none">
                     {item.label}
-                    <ArrowRight className="h-3.5 w-3.5 text-foreground0" />
+                    <ArrowRight className="h-3.5 w-3.5 text-text-secondary" />
                   </a>
                 ))}
               </div>

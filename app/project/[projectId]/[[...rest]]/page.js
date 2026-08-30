@@ -5,14 +5,17 @@ import { useRouter } from "next/navigation";
 import { SidebarProvider, SidebarInset } from "@geiger/ui";
 import { AppSidebar } from "@/components/internal/sidebar/sidebar";
 import { Topbar } from "@/components/internal/topbar/topbar";
-import { ActiveScreen } from "@/components/internal/screens/registry";
+import { ActiveScreen, isFullBleed } from "@/components/internal/screens/registry";
+import { WidgetTestLauncher } from "@/components/internal/widget/widget_test_launcher";
 import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
+import { cn } from "@/lib/utils";
 import {
   ProjectProvider,
   useProject,
   pickDefaultProjectId,
 } from "@/context/project-context";
 import { NavVisibilityProvider } from "@/context/nav-visibility-context";
+import { RbacProvider } from "@/context/rbac-context";
 import {
   LoadingArea,
   NoProjectState,
@@ -44,9 +47,11 @@ function ScreenArea({ tab }) {
 function WorkspaceContent() {
   // The active tab lives in the URL (path) so a refresh keeps the user in place.
   const { tab: currentTab, setTab: setCurrentTab } = useWorkspaceUrl();
+  const { project } = useProject();
 
   return (
     <div className="flex flex-col h-[100dvh] w-full bg-background text-foreground font-sans overflow-hidden selection:bg-surface-strong">
+      {project ? <WidgetTestLauncher projectId={project.id} /> : null}
       <SidebarProvider
         className="flex-col !flex h-full min-w-0"
         style={{ flexDirection: "column" }}
@@ -56,7 +61,16 @@ function WorkspaceContent() {
           <AppSidebar activeTab={currentTab} onTabChange={setCurrentTab} />
           <SidebarInset className="flex-1 flex flex-col h-full bg-transparent overflow-hidden relative border-none">
             <div className="absolute top-0 right-0 w-[500px] h-[300px] bg-white/[0.02] blur-[120px] pointer-events-none rounded-full" />
-            <main className="flex-1 overflow-y-auto p-4 md:p-8 relative z-10 w-full min-w-0">
+            {/* Full-bleed screens (the three-pane inbox) own their scrolling
+                and drop the padded, outer-scrolling container (spec §4.1). */}
+            <main
+              className={cn(
+                "flex-1 relative z-10 w-full min-w-0",
+                isFullBleed(currentTab)
+                  ? "overflow-hidden p-0"
+                  : "overflow-y-auto p-4 md:p-8",
+              )}
+            >
               <ScreenArea tab={currentTab} />
             </main>
           </SidebarInset>
@@ -76,9 +90,13 @@ export default function ProjectWorkspacePage() {
     >
       <ProjectProvider>
         {/* Sidebar curation is per (project, user), so it sits inside the
-            project provider and above every surface that lists destinations. */}
+            project provider and above every surface that lists destinations.
+            RBAC resolves this user's grants once per (project, user) and backs
+            every can() gate, including the nav filter. */}
         <NavVisibilityProvider>
-          <WorkspaceContent />
+          <RbacProvider>
+            <WorkspaceContent />
+          </RbacProvider>
         </NavVisibilityProvider>
       </ProjectProvider>
     </Suspense>

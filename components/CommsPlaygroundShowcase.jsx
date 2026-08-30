@@ -14,7 +14,7 @@ const CommsPlayground = dynamic(
 // over a background image, with the live Comms workspace running below in its
 // own bordered, fixed-height card.
 export default function CommsPlaygroundShowcase({
-  ctaHref = "/org",
+  ctaHref = "/project",
   ctaLabel = "Open the workspace",
   backgroundImage,
 }) {

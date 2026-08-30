@@ -3,13 +3,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
+  SegmentedTabs,
+  Button,
 } from "@geiger/ui";
 import { Bell, Download, MessageSquare } from "lucide-react";
 import * as LucideIcons from "lucide-react";
 import { getUser } from "@/lib/supabase/user";
 import { formatDistanceToNow } from "date-fns";
-import { SegmentedTabs } from "@/components/internal/shared/segmented_tabs";
-import { Button } from "@geiger/ui";
 
 const NOTIFICATION_TABS = [
   { label: "All", value: "all" },
@@ -27,9 +27,9 @@ export function NotificationsDropdown({ children }) {
 
       if (userData) {
         const { createClient } = await import("@/lib/supabase/client");
-        // The base client is scoped to this app's `events` schema, but
+        // The base client is scoped to this app's `comms` schema, but
         // flow_notifications is a suite-shared table in `public` — override the
-        // schema for this read so it doesn't resolve to events.flow_notifications.
+        // schema for this read so it doesn't resolve to comms.flow_notifications.
         const supabase = createClient();
         const { data, error } = await supabase
           .schema("public")
