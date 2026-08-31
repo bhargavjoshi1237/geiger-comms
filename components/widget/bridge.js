@@ -25,6 +25,7 @@ const INBOUND_TYPES = new Set([
   "showNewMessage",
   "showTicket",
   "trackEvent",
+  "launcher",
   "shutdown",
 ]);
 

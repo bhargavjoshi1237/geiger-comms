@@ -3,11 +3,26 @@
 // Non-functional visual preview of the Messenger widget (channels spec §5.1).
 // Reflects launcherColor, greeting and position; it is a mock, not an embed.
 
-import { MessageCircle } from "lucide-react";
 import { cn } from "@geiger/ui";
+import { BrandBubble } from "@/components/widget/widget_primitives";
+
+// Same rule the loader applies, so the preview shows the glyph colour the
+// visitor will actually get for a given launcherColor.
+function readableOn(hex) {
+  const h = String(hex || "").replace("#", "");
+  const full = h.length === 3 ? h[0] + h[0] + h[1] + h[1] + h[2] + h[2] : h;
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return "#161616";
+  const l =
+    (0.2126 * parseInt(full.slice(0, 2), 16) +
+      0.7152 * parseInt(full.slice(2, 4), 16) +
+      0.0722 * parseInt(full.slice(4, 6), 16)) /
+    255;
+  return l > 0.6 ? "#161616" : "#ffffff";
+}
 
 export function MessengerPreview({ config = {} }) {
   const left = (config.position || "right") === "left";
+  const launcherColor = config.launcherColor || "#ffffff";
   return (
     <div
       className={cn(
@@ -25,14 +40,14 @@ export function MessengerPreview({ config = {} }) {
       <div
         className={cn("absolute bottom-4 flex items-center gap-1", left ? "left-4" : "right-4")}
       >
-        <span className="pointer-events-none -mt-8 mr-1 h-6 min-w-5 rounded-full bg-red-500/20 px-1.5 text-center text-[10px] font-bold leading-6 text-red-400">
+        <span className="pointer-events-none -mt-8 mr-1 h-5 min-w-5 rounded-full bg-blue-500 px-1.5 text-center text-[10px] font-semibold leading-5 text-white">
           1
         </span>
         <span
           className="flex size-11 items-center justify-center rounded-full shadow-lg"
-          style={{ backgroundColor: config.launcherColor || "#6366f1" }}
+          style={{ backgroundColor: launcherColor, color: readableOn(launcherColor) }}
         >
-          <MessageCircle className="size-5 text-white" />
+          <BrandBubble size={22} />
         </span>
       </div>
     </div>

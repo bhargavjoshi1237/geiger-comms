@@ -66,7 +66,7 @@ export function ChannelConfigForm({ meta, config = {}, onChange }) {
               <input
                 type="color"
                 aria-label={field.label}
-                value={config[field.key] || "#6366f1"}
+                value={config[field.key] || "#ffffff"}
                 onChange={(e) => set(field.key)(e.target.value)}
                 className="size-8 cursor-pointer rounded-md border border-border bg-surface-card p-0.5"
               />

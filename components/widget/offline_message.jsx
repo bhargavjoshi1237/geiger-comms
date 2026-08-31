@@ -1,40 +1,34 @@
 "use client";
 
-// "Leave a message" surface used when the team is offline or AI is asleep.
-// Submits a lead via /api/widget/leads which the workspace's Lead Inbox
-// catches and turns into a fresh conversation on the next business day.
+// Offline — the away notice in the header, the AI offered as the immediate
+// path, and an email-and-message fallback for anything it can't close out.
+// Submits a lead through /api/widget/leads, which the workspace turns into a
+// conversation on the next business day.
 
 import { useState } from "react";
-import {
-  ChevronLeft,
-  SendIcon,
-  SparklesIcon,
-} from "./widget_primitives";
-import { Avatar } from "./home_space";
+import { Clock, Sparkles, X } from "./widget_primitives";
 
-export function OfflineMessageView({ config, onClose }) {
-  const greeting = config?.greeting || "Hi there";
-  const teamOnline = config?.teamOnline !== false;
-  const note = config?.officeHoursNote || "The team is away — back at 09:00 GMT, in about 11 hours.";
-  const [email, setEmail] = useState("");
-  const [message, setMessage] = useState("");
+const BASE = process.env.NEXT_PUBLIC_BASE_PATH || "";
+
+export function OfflineMessageView({ config, contact, onAsk, onClose }) {
+  const brand = config?.name || "Northwind Help";
+  const assistant = config?.assistantName || "Aria";
+  const backAt = config?.backAt || config?.officeHoursNote || "";
+  const [email, setEmail] = useState(contact?.email || "");
+  const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
 
-  async function submit(e) {
-    e?.preventDefault?.();
-    if (!email.trim() || !message.trim() || sending) return;
+  async function submit() {
+    if (!email.trim() || !body.trim() || sending) return;
     setSending(true);
     setError("");
     try {
-      // The shared API client knows about /leads already; we can't pass it
-      // via props here, so issue a fetch directly through the public route.
-      const base = process.env.NEXT_PUBLIC_BASE_PATH || "";
-      const res = await fetch(`${base}/api/widget/leads`, {
+      const res = await fetch(`${BASE}/api/widget/leads`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), message: message.trim() }),
+        body: JSON.stringify({ email: email.trim(), message: body.trim() }),
       });
       if (!res.ok) throw new Error("send_failed");
       setSent(true);
@@ -46,92 +40,105 @@ export function OfflineMessageView({ config, onClose }) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex items-center gap-2 border-b border-border px-4 py-3">
-        <button
-          type="button"
-          aria-label="Back"
-          onClick={onClose}
-          className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground hover:bg-surface-hover"
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <span className="text-sm font-semibold">{config?.name || "Northwind Help"}</span>
+    <>
+      <header className="gc-offlinehead">
+        <div className="gc-header__row">
+          <div className="gc-header__brand">
+            <div className="gc-header__logo" style={{ width: 22, height: 22, fontSize: 10 }} aria-hidden="true">
+              {(brand.match(/[A-Z]/g) || ["N"]).slice(0, 2).join("")}
+            </div>
+            <span className="gc-header__brandname" style={{ fontSize: 12.5 }}>
+              {brand}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="gc-iconbtn gc-iconbtn--sm"
+            onClick={onClose}
+            aria-label="Close messenger"
+          >
+            <X />
+          </button>
+        </div>
+        <div className="gc-awaybar">
+          <Clock />
+          <span>
+            The team is away{backAt ? <> — back at <strong>{backAt}</strong></> : null}.
+          </span>
+        </div>
       </header>
 
-      <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-        {teamOnline ? (
-          <p className="mb-4 rounded-lg bg-surface-card px-3 py-2 text-[12px] text-muted-foreground">{greeting}. How can we help?</p>
-        ) : (
-          <p className="mb-4 rounded-lg bg-surface-card px-3 py-2 text-[12px] text-muted-foreground">⏳ {note}</p>
-        )}
-
-        {!teamOnline ? (
-          <section className="rounded-xl border border-border bg-surface-card p-3">
-            <header className="mb-2 flex items-center gap-2">
-              <span className="grid h-7 w-7 place-items-center rounded-full bg-primary/10 text-primary">
-                <SparklesIcon className="h-4 w-4" />
-              </span>
-              <span className="text-sm font-semibold">Aria is still awake</span>
-            </header>
-            <p className="mb-3 text-[12px] text-muted-foreground">
-              She can answer most questions right now. Anything she can't solve, we flag for the morning.
+      <div className="gc-offline">
+        <div className="gc-offercard">
+          <Sparkles size={15} className="gc-offercard__icon" />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <p className="gc-offercard__title">{assistant} is still awake</p>
+            <p className="gc-offercard__desc">
+              {assistant} can answer most questions now and flags anything she can&rsquo;t for the morning.
             </p>
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-full rounded-full bg-primary py-2 text-sm font-medium text-primary-foreground"
-            >
-              Ask Aria now
+            <button type="button" className="gc-primarybtn" onClick={onAsk}>
+              Ask {assistant} now
             </button>
-          </section>
-        ) : null}
+          </div>
+        </div>
 
-        <div className="my-5 flex items-center gap-3 text-[10px] uppercase tracking-wider text-muted-foreground">
-          <span className="h-px flex-1 bg-border" />
-          <span>or leave a message</span>
-          <span className="h-px flex-1 bg-border" />
+        <div className="gc-rule">
+          <span className="gc-rule__label">OR LEAVE A MESSAGE</span>
         </div>
 
         {sent ? (
-          <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-[12px] text-emerald-400">
-            Thanks — we'll email you back at <strong>{email}</strong> as soon as a teammate is online.
+          <div className="gc-state">
+            <p className="gc-state__title">Message sent</p>
+            <p className="gc-state__hint">
+              We&rsquo;ll email you back at {email} as soon as a teammate is online.
+            </p>
           </div>
         ) : (
-          <form onSubmit={submit} className="flex flex-col gap-3">
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Email</span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
+            <div className="gc-field">
+              <label className="gc-field__label" htmlFor="gc-offline-email">
+                Email
+              </label>
               <input
+                id="gc-offline-email"
                 type="email"
+                className="gc-input"
                 value={email}
+                placeholder="you@example.com"
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="sam@example.com"
-                className="rounded-lg border border-border bg-surface-card px-3 py-2 text-sm outline-none focus:border-border-strong"
-                required
               />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Message</span>
+            </div>
+            <div className="gc-field gc-field--grow">
+              <label className="gc-field__label" htmlFor="gc-offline-body">
+                Message
+              </label>
               <textarea
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                rows={6}
+                id="gc-offline-body"
+                className="gc-textarea"
+                style={{ marginTop: 0, borderColor: "var(--gc-border)" }}
+                value={body}
                 placeholder="What can we help with?"
-                className="resize-none rounded-lg border border-border bg-surface-card px-3 py-2 text-sm outline-none focus:border-border-strong"
-                required
+                onChange={(e) => setBody(e.target.value)}
               />
-            </label>
-            {error ? <p className="text-xs text-red-400">{error}</p> : null}
-            <button
-              type="submit"
-              disabled={!email.trim() || !message.trim() || sending}
-              className="w-full rounded-full bg-primary py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-50"
-            >
-              {sending ? "Sending…" : "Send and email me the reply"}
-            </button>
-          </form>
+            </div>
+            {error ? <p className="gc-state__hint" style={{ color: "var(--gc-danger)" }}>{error}</p> : null}
+          </div>
         )}
-      </main>
-    </div>
+      </div>
+
+      {sent ? null : (
+        <footer className="gc-panel__footer" style={{ padding: "12px 14px" }}>
+          <button
+            type="button"
+            className="gc-outlinebtn"
+            style={{ height: 38, borderRadius: 10, fontSize: 13, width: "100%" }}
+            disabled={!email.trim() || !body.trim() || sending}
+            onClick={submit}
+          >
+            {sending ? "Sending…" : "Send and email me the reply"}
+          </button>
+        </footer>
+      )}
+    </>
   );
 }

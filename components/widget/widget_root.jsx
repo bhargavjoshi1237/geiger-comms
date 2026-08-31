@@ -10,8 +10,10 @@ export default function WidgetRoot() {
   return (
     <Suspense
       fallback={
-        <div className="flex h-dvh items-center justify-center bg-background text-foreground">
-          <p className="text-xs text-muted-foreground">Starting chat…</p>
+        <div className="gc-widget gc-widget--framed">
+          <div className="gc-boot">
+            <p>Starting chat…</p>
+          </div>
         </div>
       }
     >

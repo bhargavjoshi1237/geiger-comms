@@ -1,13 +1,12 @@
 "use client";
 
-// Proactive message popup — a small, dismissible card that the messenger
-// shows when the team has outbound context to share (recent order update,
-// returns window, policy change). Lives at the bottom-right corner of the
-// iframe so the launcher stays accessible.
+// Proactive message — a compact card from a named teammate with two answers
+// and a reply box. Inside the iframe it floats over the panel (see the framed
+// overrides in app/widget/widget.css); on a host page the same markup sits
+// above the launcher.
 
 import { useEffect, useState } from "react";
-import { XIcon, ArrowUpIcon } from "./widget_primitives";
-import { Avatar } from "./home_space";
+import { ArrowUp, Avatar, X } from "./widget_primitives";
 
 export function ProactivePopup({ message, onReply, onDismiss }) {
   const [reply, setReply] = useState("");
@@ -20,8 +19,10 @@ export function ProactivePopup({ message, onReply, onDismiss }) {
 
   if (!message) return null;
 
-  function submit(e) {
-    e.preventDefault();
+  const author = message.author || "Maya from Northwind";
+  const [confirm, dismiss] = message.actions || [];
+
+  function send() {
     const text = reply.trim();
     if (!text) return;
     onReply?.(text);
@@ -29,62 +30,54 @@ export function ProactivePopup({ message, onReply, onDismiss }) {
   }
 
   return (
-    <div className="absolute inset-x-2 bottom-2 z-20 max-w-sm rounded-xl border border-border bg-surface-card p-3 shadow-2xl">
-      <header className="mb-2 flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Avatar name={message.author || "Maya"} size={28} />
-          <span>
-            <span className="block text-sm font-semibold leading-tight">{message.author || "Maya from Northwind"}</span>
-            <span className="text-[11px] text-muted-foreground">{message.subtitle || "Just now"}</span>
-          </span>
+    <section className="gc-proactive" aria-label={`Message from ${author}`}>
+      <div className="gc-proactive__head">
+        <Avatar name={author} size="sm" showStatus online />
+        <div className="gc-proactive__who">
+          <span className="gc-proactive__name">{author}</span>
+          <span className="gc-proactive__when">{(message.subtitle || "Just now").toUpperCase()}</span>
         </div>
         <button
           type="button"
-          aria-label="Dismiss"
+          className="gc-proactive__dismiss"
           onClick={() => onDismiss?.()}
-          className="grid h-7 w-7 place-items-center rounded-full text-muted-foreground hover:bg-surface-hover"
+          aria-label="Dismiss message"
         >
-          <XIcon className="h-4 w-4" />
+          <X size={13} />
         </button>
-      </header>
+      </div>
 
-      <p className="text-sm leading-snug">{message.body}</p>
-
-      {message.actions?.length ? (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {message.actions.map((a) => (
-            <button
-              key={a.label}
-              type="button"
-              onClick={() => (a.action ? a.action() : onReply?.(a.label))}
-              className={`rounded-full px-3 py-1.5 text-[12px] font-medium ${
-                a.primary
-                  ? "bg-primary text-primary-foreground"
-                  : "border border-border bg-surface-card hover:bg-surface-hover"
-              }`}
-            >
-              {a.label}
-            </button>
-          ))}
+      <div className="gc-proactive__body">
+        <p className="gc-proactive__msg">{message.body}</p>
+        <div className="gc-proactive__actions">
+          <button type="button" className="gc-proactive__yes" onClick={() => onReply?.(confirm?.label || "Yes")}>
+            {confirm?.label || "Yes, please"}
+          </button>
+          <button type="button" className="gc-proactive__no" onClick={() => onDismiss?.()}>
+            {dismiss?.label || "No thanks"}
+          </button>
         </div>
-      ) : null}
+      </div>
 
-      <form onSubmit={submit} className="mt-3 flex items-center gap-2 rounded-full border border-border bg-surface-base px-3 py-1.5">
-        <input
-          value={reply}
-          onChange={(e) => setReply(e.target.value)}
-          placeholder="Reply…"
-          className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-        />
-        <button
-          type="submit"
-          aria-label="Send"
-          disabled={!reply.trim()}
-          className="grid h-7 w-7 place-items-center rounded-full bg-primary text-primary-foreground disabled:opacity-40"
-        >
-          <ArrowUpIcon className="h-3.5 w-3.5" />
-        </button>
-      </form>
-    </div>
+      <div className="gc-proactive__reply">
+        <div className="gc-proactive__replybox">
+          <input
+            value={reply}
+            placeholder="Reply…"
+            aria-label={`Reply to ${author}`}
+            onChange={(e) => setReply(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                send();
+              }
+            }}
+          />
+          <button type="button" className="gc-proactive__send" onClick={send} aria-label="Send reply">
+            <ArrowUp size={12} />
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }

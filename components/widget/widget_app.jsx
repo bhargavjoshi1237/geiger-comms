@@ -4,8 +4,10 @@
 // the in-memory session, spaces routing and the realtime subscription. Tokens
 // never leave memory — nothing here is persisted.
 //
-// Launcher states are echoed up to the host via postMessage so the
-// loader's launcher can render pill, badge or close icons.
+// Visually it is the design's panel: `.gc-widget` holds the tokens, `.gc-panel`
+// is the card, and every space renders header → body → footer inside it. The
+// three-tab bar belongs to the panel, so a sub-screen (a thread, an article,
+// the composer) hides it and the panel reads as one task.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -18,7 +20,15 @@ import { MessagesSpace } from "./messages_space";
 import { HelpSpace } from "./help_space";
 import { NewsSpace } from "./news_space";
 import { TicketsSpace } from "./tickets_space";
-import { ReconnectingBanner, Spinner } from "./widget_primitives";
+import { OfflineMessageView } from "./offline_message";
+import {
+  BookHeart,
+  BrandBubble,
+  Mail,
+  MessageCircle,
+  ReconnectingBanner,
+  Spinner,
+} from "./widget_primitives";
 import { ProactivePopup } from "./proactive";
 
 // Next serves this app under basePath ("/comms" in prod), but fetch() is not
@@ -32,6 +42,9 @@ const DEFAULT_CONFIG = {
   name: "Northwind Help",
   greeting: "Hi there. How can we help?",
   officeHoursNote: "",
+  assistantName: "Aria",
+  assistantTagline: "Answers about your order, return or account in seconds.",
+  team: [],
   teamOnline: true,
   showAvatars: true,
   spaces: { home: true, messages: true, help: true, news: true, tickets: true, ask: true },
@@ -47,6 +60,19 @@ const DEMO_PROACTIVE = {
   ],
 };
 
+// Which tab root the current route belongs to. Sub-screens return null so the
+// nav hides; news and tickets keep the bar but light nothing up.
+function tabForRoute(route) {
+  if (route.space === "home") return "home";
+  if (route.space === "messages" && !route.conversationId && !route.newAbout && !route.newLabel) {
+    return "messages";
+  }
+  if (route.space === "help" && !route.articleId) return "help";
+  if (route.space === "news" && !route.postId) return "";
+  if (route.space === "tickets" && !route.ticketId) return "";
+  return null;
+}
+
 export function WidgetApp() {
   const searchParams = useSearchParams();
   const expectedParentOrigin = searchParams.get("parentOrigin") || "";
@@ -61,6 +87,12 @@ export function WidgetApp() {
   const [realtimeToken, setRealtimeToken] = useState(null);
   const [proactive, setProactive] = useState(null);
   const [lastAgent, setLastAgent] = useState(null);
+  const [unread, setUnreadCount] = useState(0);
+  const [theme, setTheme] = useState("dark");
+  // The host can hide the iframe without tearing it down; while hidden we stop
+  // the realtime subscription and any polling so a closed widget costs nothing.
+  const [visible, setVisible] = useState(true);
+  const [launcherState, setLauncherState] = useState(null);
 
   const tokensRef = useRef(null);
   const bridgeRef = useRef(null);
@@ -70,6 +102,17 @@ export function WidgetApp() {
   const unreadRef = useRef(0);
   const rebootsRef = useRef(0);
   const bootRef = useRef(null);
+
+  // The panel carries its own token set; follow the document's theme so the
+  // messenger doesn't sit dark inside a light page (or the reverse).
+  useEffect(() => {
+    const root = document.documentElement;
+    const read = () => setTheme(root.classList.contains("dark") ? "dark" : "light");
+    read();
+    const observer = new MutationObserver(read);
+    observer.observe(root, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
 
   const postToHost = useCallback(
     (type, payload) => bridgeRef.current?.send(type, payload),
@@ -86,6 +129,7 @@ export function WidgetApp() {
       }
       const changed = unreadRef.current !== next;
       unreadRef.current = next;
+      setUnreadCount(next);
       if (changed) postToHost("unreadCount", { count: next });
       if (next > 0 && author) {
         setLastAgent(author);
@@ -168,6 +212,20 @@ export function WidgetApp() {
           case "boot":
             void boot(payload);
             break;
+          case "show":
+            setVisible(true);
+            break;
+          case "hide":
+            setVisible(false);
+            break;
+          // Echo of the host's setLauncherState(); keeps the messenger's idea of
+          // the launcher (label, badge, who replied) in sync with the host page.
+          case "launcher": {
+            const p = payload && typeof payload === "object" ? payload : {};
+            setLauncherState((prev) => ({ ...(prev || {}), ...p }));
+            if (typeof p.author === "string" && p.author) setLastAgent(p.author);
+            break;
+          }
           case "update":
             if (payload && typeof payload === "object" && typeof payload.jwt === "string") {
               tokensRef.current = null;
@@ -241,15 +299,15 @@ export function WidgetApp() {
 
   // Surface a proactive popup on first ready (demo mode).
   useEffect(() => {
-    if (phase !== "ready") return;
+    if (phase !== "ready" || !visible) return;
     const t = setTimeout(() => setProactive(DEMO_PROACTIVE), 8_000);
     return () => clearTimeout(t);
-  }, [phase]);
+  }, [phase, visible]);
 
   const openConversationId =
     route.space === "messages" && route.conversationId ? route.conversationId : null;
   useEffect(() => {
-    if (phase !== "ready" || !openConversationId || !realtimeToken) return undefined;
+    if (phase !== "ready" || !visible || !openConversationId || !realtimeToken) return undefined;
     return subscribeToConversation({
       url: process.env.NEXT_PUBLIC_SUPABASE_URL,
       realtimeToken,
@@ -263,7 +321,7 @@ export function WidgetApp() {
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, openConversationId, realtimeToken]);
+  }, [phase, visible, openConversationId, realtimeToken]);
 
   const spaceProps = useMemo(
     () => ({
@@ -278,38 +336,73 @@ export function WidgetApp() {
       onUnread: setUnread,
       postToHost,
       lastAgent,
+      visible,
+      launcherState,
       onProactive: (msg) => {
         setProactive(msg);
         if (msg?.author) setLastAgent(msg.author);
       },
     }),
-    [config, contact, route, navigate, enqueueCommand, reconnecting, refreshSignal, setUnread, postToHost, lastAgent],
+    [
+      config,
+      contact,
+      route,
+      navigate,
+      enqueueCommand,
+      reconnecting,
+      refreshSignal,
+      setUnread,
+      postToHost,
+      lastAgent,
+      visible,
+      launcherState,
+    ],
   );
 
   if (phase === "waiting" || phase === "booting") {
     return (
-      <div className="flex h-dvh flex-col items-center justify-center gap-3 bg-background text-foreground">
-        <Spinner />
-        <p className="text-xs text-muted-foreground">
-          {phase === "waiting" ? "Starting chat…" : "Signing you in…"}
-        </p>
-      </div>
+      <Shell theme={theme}>
+        <div className="gc-boot">
+          <span className="gc-boot__mark" aria-hidden="true">
+            <BrandBubble size={26} />
+          </span>
+          <Spinner />
+          <p>{phase === "waiting" ? "Starting chat…" : "Signing you in…"}</p>
+        </div>
+      </Shell>
     );
   }
 
   if (phase === "error") {
     return (
-      <div className="flex h-dvh items-center justify-center bg-background px-6 text-foreground">
-        <p className="text-center text-sm text-muted-foreground">{bootError}</p>
-      </div>
+      <Shell theme={theme}>
+        <div className="gc-boot">
+          <span className="gc-boot__mark" aria-hidden="true">
+            <BrandBubble size={26} />
+          </span>
+          <p>{bootError}</p>
+        </div>
+      </Shell>
     );
   }
 
+  // Team away: the panel opens on the "leave a message" screen instead of home.
+  const away = config?.teamOnline === false && route.space === "home";
+  const activeTab = away ? null : tabForRoute(route);
+
   return (
-    <div className="flex h-dvh flex-col bg-background text-foreground">
-      <ReconnectingBanner visible={reconnecting} />
-      <main className="relative min-h-0 flex-1 overflow-y-auto">
-        {route.space === "ask" ? (
+    <Shell theme={theme}>
+      <div className="gc-panel" role="dialog" aria-label="Messenger">
+        <ReconnectingBanner visible={reconnecting} />
+
+        {away ? (
+          <OfflineMessageView
+            config={config}
+            contact={contact}
+            onAsk={() => navigate({ space: "ask" })}
+            onClose={() => postToHost("close")}
+          />
+        ) : route.space === "ask" ? (
           <AskSpace {...spaceProps} />
         ) : route.space === "messages" ? (
           <MessagesSpace {...spaceProps} />
@@ -323,63 +416,71 @@ export function WidgetApp() {
           <HomeSpace {...spaceProps} />
         )}
 
-        <ProactivePopup
-          message={proactive}
-          onDismiss={() => setProactive(null)}
-          onReply={(text) => {
-            apiRef.current?.trackEvent?.("proactive:replied", { id: proactive?.id, text });
-            // Convert a reply into a new conversation prefilled.
-            setRoute({ space: "messages", newAbout: "order", newLabel: "An order", draft: text });
-            setProactive(null);
-          }}
-        />
-      </main>
-      <BottomNav route={route} navigate={navigate} config={config} />
+        {activeTab === null ? null : (
+          <TabBar active={activeTab} unread={unread} config={config} onChange={navigate} />
+        )}
+      </div>
+
+      <ProactivePopup
+        message={proactive}
+        onDismiss={() => setProactive(null)}
+        onReply={(text) => {
+          apiRef.current?.trackEvent?.("proactive:replied", { id: proactive?.id, text });
+          setRoute({ space: "messages", newAbout: "order", newLabel: "An order", draft: text });
+          setProactive(null);
+        }}
+      />
+    </Shell>
+  );
+}
+
+// The token scope and the frame the loader's iframe fills.
+function Shell({ theme, children }) {
+  return (
+    <div className="gc-widget gc-widget--framed" data-theme={theme}>
+      <div className="gc-root">{children}</div>
     </div>
   );
 }
 
-function BottomNav({ route, navigate, config }) {
-  const tabs = useMemo(() => {
-    const available = config?.spaces || {};
-    const list = [];
-    if (available.home) list.push({ id: "home", label: "Home", match: (r) => r.space === "home" });
-    if (available.messages)
-      list.push({
-        id: "messages",
-        label: "Messages",
-        match: (r) => r.space === "messages",
-        matchExact: (r) => r.space === "messages" && r.conversationId,
-      });
-    if (available.help)
-      list.push({
-        id: "help",
-        label: "Help",
-        match: (r) => r.space === "help",
-      });
-    return list;
-  }, [config?.spaces]);
+const TABS = [
+  { id: "home", label: "Home", Icon: MessageCircle },
+  { id: "messages", label: "Messages", Icon: Mail },
+  { id: "help", label: "Help", Icon: BookHeart },
+];
 
+// Home · Messages · Help. A space the config has disabled drops out; fewer than
+// two tabs means there is nothing to switch between, so the bar hides.
+function TabBar({ active, unread = 0, config, onChange }) {
+  const tabs = TABS.filter((t) => config?.spaces?.[t.id] !== false);
   if (tabs.length < 2) return null;
 
   return (
-    <nav className="grid grid-cols-3 border-t border-border bg-background">
-      {tabs.map((t) => {
-        const active = t.match(route);
+    <nav
+      className="gc-tabs"
+      aria-label="Messenger sections"
+      style={{ gridTemplateColumns: `repeat(${tabs.length}, 1fr)` }}
+    >
+      {tabs.map(({ id, label, Icon }) => {
+        const selected = id === active;
+        const badge = id === "messages" && unread > 0;
         return (
           <button
-            key={t.id}
+            key={id}
             type="button"
-            onClick={() => navigate(t.id === "home" ? { space: "home" } : { space: t.id })}
-            className={`flex flex-col items-center gap-0.5 py-2 text-[10px] font-medium ${
-              active ? "text-foreground" : "text-muted-foreground"
-            }`}
+            className="gc-tab"
+            role="tab"
+            aria-selected={selected}
+            onClick={() => onChange({ space: id })}
           >
-            <span
-              className={`block h-1 w-6 rounded-full ${active ? "bg-foreground" : "bg-transparent"}`}
-              aria-hidden="true"
-            />
-            <span>{t.label}</span>
+            <Icon />
+            <span>{label}</span>
+            {badge ? (
+              <span className="gc-tab__badge" aria-hidden="true">
+                {unread}
+              </span>
+            ) : null}
+            {badge ? <span className="gc-sr">, {unread} unread</span> : null}
           </button>
         );
       })}

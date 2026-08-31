@@ -1,31 +1,34 @@
 "use client";
 
-// Messages space (§9): conversation list → thread → composer, plus the
-// "New conversation" screen used when the route's newAbout flag is set.
+// Messages — the conversation list, the thread and the "new conversation"
+// screen, all in the drawn messenger shell.
 //
-// The thread is the realtime surface (notifications re-fetch through the API),
-// shows typing dots while the teammate is composing, surfaces a rating prompt
-// when the conversation is closed, and renders a "handed over" badge when the
-// AI escalated to a human.
+// One thread renderer covers every case the design draws: an AI author gets a
+// plain bubble and the "get a human" escape hatch, a human author gets an
+// avatar and a read receipt, a closed thread swaps the composer for the rating
+// card. What changes between them is the data, not the layout.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ChevronLeft,
-  PaperclipIcon,
-  ArrowUpIcon,
-  LoadingState,
-  EmptyState,
+  AiBadge,
+  Avatar,
+  AvatarStack,
+  Banner,
+  CheckCheck,
   ErrorState,
-  StarIcon,
-  Spinner,
-  PlusIcon,
+  HeaderBar,
+  LoadingState,
+  Plus,
+  Sparkles,
+  StatusPill,
+  UnreadCount,
+  User,
 } from "./widget_primitives";
-import { Avatar } from "./home_space";
+import { Composer } from "./composer";
 import { stripMetadata } from "./image";
 import { MarkdownView } from "./markdown_view";
 import { NewConversationView } from "./new_conversation";
-import { OfflineMessageView } from "./offline_message";
-import { RatingPrompt } from "./rating";
+import { RatingCard } from "./rating";
 
 function formatTime(iso) {
   if (!iso) return "";
@@ -43,14 +46,29 @@ function relativeShort(iso) {
     if (diff < 1) return "now";
     if (diff < 60) return `${diff}m`;
     if (diff < 60 * 24) return `${Math.round(diff / 60)}h`;
-    const d = Math.round(diff / (60 * 24));
-    return `${d}d`;
+    return `${Math.round(diff / (60 * 24))}d`;
   } catch {
     return "";
   }
 }
 
-export function MessagesSpace({ getApi, route, navigate, refreshSignal, onUnread }) {
+// The API's author roles collapse into the three the design draws.
+function authorKind(role) {
+  if (role === "customer" || role === "visitor" || role === "user") return "visitor";
+  if (role === "ai_agent" || role === "ai" || role === "bot") return "ai";
+  if (role === "system" || role === "note") return "system";
+  return "agent";
+}
+
+export function MessagesSpace({
+  getApi,
+  config,
+  route,
+  navigate,
+  refreshSignal,
+  onUnread,
+  visible = true,
+}) {
   const [conversations, setConversations] = useState(null);
   const [failed, setFailed] = useState(false);
 
@@ -64,31 +82,33 @@ export function MessagesSpace({ getApi, route, navigate, refreshSignal, onUnread
       .catch(() => setFailed(true));
   }, [getApi]);
 
-  useEffect(load, [load, refreshSignal]);
+  // A hidden iframe keeps its last snapshot; polling resumes on the next show.
+  useEffect(() => {
+    if (visible) load();
+  }, [load, refreshSignal, visible]);
 
-  // New conversation flow (Hub "Quick actions" → Message a person)
   if (route.newAbout || route.newLabel) {
     return (
       <NewConversationView
         getApi={getApi}
+        config={config}
         initialKind={route.newAbout}
         initialLabel={route.newLabel}
         initialDraft={route.draft}
-        onClose={() => navigate({ space: "home" })}
-        onSent={(conversation) =>
-          navigate({ space: "messages", conversationId: conversation.id })
-        }
+        onBack={() => navigate({ space: "messages" })}
+        onSent={(conversation) => navigate({ space: "messages", conversationId: conversation.id })}
       />
     );
   }
 
   if (route.conversationId) {
     return (
-      <ThreadView
+      <ThreadScreen
         key={route.conversationId}
         conversationId={route.conversationId}
         initialBody={route.draft || ""}
         getApi={getApi}
+        config={config}
         onBack={() => navigate({ space: "messages" })}
         onSeen={() => onUnread?.(0)}
         onConversationsChanged={load}
@@ -99,122 +119,142 @@ export function MessagesSpace({ getApi, route, navigate, refreshSignal, onUnread
   return (
     <ConversationsList
       conversations={conversations}
+      config={config}
       failed={failed}
       load={load}
       open={(c) => {
         onUnread?.(0);
         navigate({ space: "messages", conversationId: c.id });
       }}
-      start={() => navigate({ space: "messages", newAbout: "general" })}
+      onNew={() => navigate({ space: "messages", newAbout: "general", newLabel: "Something else" })}
     />
   );
 }
 
-function ConversationsList({ conversations, failed, load, open, start }) {
-  const [tab, setTab] = useState("open");
-  const openCount = conversations?.filter((c) => c.state !== "closed").length ?? 0;
-  const closedCount = conversations?.filter((c) => c.state === "closed").length ?? 0;
-  const visible = conversations?.filter((c) => (tab === "open" ? c.state !== "closed" : c.state === "closed")) ?? [];
+function ConversationsList({ conversations, config, failed, load, open, onNew }) {
+  const [filter, setFilter] = useState("open");
+
+  const rows = conversations ?? [];
+  const openRows = rows.filter((c) => c.state !== "closed");
+  const closedRows = rows.filter((c) => c.state === "closed");
+  const shown = filter === "open" ? openRows : closedRows;
+  const team = config?.team ?? [];
+  const teamOnline = config?.teamOnline !== false;
+  const assistant = config?.assistantName || "Aria";
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex items-center justify-between border-b border-border px-4 py-3">
-        <h1 className="text-sm font-semibold">Your conversations</h1>
-        <button
-          type="button"
-          onClick={start}
-          className="flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground"
-        >
-          + New
+    <>
+      <header className="gc-listhead">
+        <span className="gc-listhead__title">Your conversations</span>
+        <button type="button" className="gc-primarybtn" onClick={onNew}>
+          <Plus />
+          New
         </button>
       </header>
 
-      <div className="flex items-center gap-3 border-b border-border px-4 py-2 text-[12px]">
-        <button
-          type="button"
-          onClick={() => setTab("open")}
-          className={`pb-1 ${tab === "open" ? "border-b-2 border-primary font-semibold" : "text-muted-foreground"}`}
-        >
-          Open · {openCount}
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("closed")}
-          className={`pb-1 ${tab === "closed" ? "border-b-2 border-primary font-semibold" : "text-muted-foreground"}`}
-        >
-          Closed · {closedCount}
-        </button>
-      </div>
+      <div className="gc-panel__body gc-panel__body--stack">
+        <div className="gc-filters" role="tablist" aria-label="Filter conversations">
+          <button
+            type="button"
+            role="tab"
+            className="gc-filter"
+            aria-selected={filter === "open"}
+            onClick={() => setFilter("open")}
+          >
+            Open · {openRows.length}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            className="gc-filter"
+            aria-selected={filter === "closed"}
+            onClick={() => setFilter("closed")}
+          >
+            Closed · {closedRows.length}
+          </button>
+        </div>
 
-      {conversations === null && !failed ? (
-        <LoadingState label="Loading conversations…" />
-      ) : failed ? (
-        <ErrorState title="Couldn't load your messages" onRetry={load} />
-      ) : visible.length === 0 ? (
-        <EmptyState
-          title={tab === "open" ? "No open conversations" : "No closed conversations"}
-          hint={tab === "open" ? "Tap + New to start one." : undefined}
-        />
-      ) : (
-        <ul className="flex flex-col gap-1 px-4 py-3">
-          {visible.map((c) => (
-            <li key={c.id}>
+        {conversations === null && !failed ? (
+          <LoadingState label="Loading conversations…" />
+        ) : failed ? (
+          <ErrorState title="Couldn't load your messages" onRetry={load} />
+        ) : (
+          <>
+            {shown.map((c, i) => (
               <button
+                key={c.id}
                 type="button"
+                className="gc-convo"
+                data-active={i === 0 && filter === "open"}
+                data-closed={c.state === "closed"}
                 onClick={() => open(c)}
-                className="flex w-full items-center gap-3 rounded-lg border border-border bg-surface-card p-3 text-left hover:bg-surface-hover"
               >
-                <Avatar name={c.agentName || c.subject} />
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="truncate text-sm font-medium">{c.subject || "Your conversation"}</span>
-                    <span className="shrink-0 text-[11px] text-muted-foreground">{relativeShort(c.lastActivityAt)}</span>
-                  </span>
-                  <span className="mt-1 flex items-center gap-1.5 text-[12px] text-muted-foreground">
-                    <span className="truncate">{c.preview || "—"}</span>
-                    {c.state === "closed" ? (
-                      <span className="ml-1 rounded-full bg-surface-subtle px-1.5 py-0.5 text-[10px] font-medium">
-                        Closed
-                      </span>
-                    ) : null}
-                    {c.unread ? (
-                      <span className="ml-auto grid h-4 min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
-                        {c.unread}
-                      </span>
-                    ) : null}
-                  </span>
-                </span>
+                {c.aiOnly ? (
+                  <div className="gc-avatar gc-avatar--lg" aria-hidden="true">
+                    <Sparkles size={14} />
+                  </div>
+                ) : (
+                  <Avatar name={c.agentName || c.subject} size="lg" showStatus online={c.state !== "closed"} />
+                )}
+                <div className="gc-convo__body">
+                  <div className="gc-convo__top">
+                    <span className="gc-convo__title">{c.subject || "Your conversation"}</span>
+                    <span className="gc-convo__time">{relativeShort(c.lastActivityAt || c.updatedAt)}</span>
+                  </div>
+                  <p className={c.unread ? "gc-convo__preview gc-convo__preview--unread" : "gc-convo__preview"}>
+                    {c.previewAuthor ? <strong>{c.previewAuthor}:</strong> : null} {c.preview || "—"}
+                  </p>
+                  <div className="gc-convo__meta">
+                    <StatusPill status={c.state === "closed" ? "closed" : "open"} />
+                    {c.unread ? <UnreadCount count={c.unread} /> : null}
+                  </div>
+                </div>
               </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+            ))}
+
+            {shown.length === 0 ? (
+              <div className="gc-state">
+                <p className="gc-state__title">
+                  {filter === "open" ? "No open conversations" : "No closed conversations"}
+                </p>
+                {filter === "open" ? <p className="gc-state__hint">Tap New to start one.</p> : null}
+              </div>
+            ) : null}
+
+            <div className="gc-listfoot">
+              <div className="gc-teamcard">
+                <AvatarStack people={team.length ? team : [{ name: "Support" }]} />
+                <span>{teamOnline ? "Team is online now" : `Team is away — ${assistant} can still help`}</span>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </>
   );
 }
 
-function ThreadView({
+function ThreadScreen({
   conversationId,
   initialBody,
   getApi,
+  config,
   onBack,
   onSeen,
   onConversationsChanged,
 }) {
   const [state, setState] = useState({ status: "loading", conversation: null, messages: [] });
+  const [draft, setDraft] = useState(initialBody);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [draft, setDraft] = useState(initialBody);
   const [typing, setTyping] = useState(false);
   const [rating, setRating] = useState(null);
-  const bottomRef = useRef(null);
+  const threadRef = useRef(null);
+
+  const assistant = config?.assistantName || "Aria";
 
   const load = useCallback(() => {
-    setState((s) => ({ ...s, status: "loading" }));
-    Promise.all([
-      getApi()?.conversations?.(),
-      getApi()?.messages?.(conversationId),
-    ])
+    Promise.all([getApi()?.conversations?.(), getApi()?.messages?.(conversationId)])
       .then(([rows, messages]) => {
         const conversation = (rows ?? []).find((c) => c.id === conversationId) ?? null;
         onSeen?.();
@@ -226,21 +266,25 @@ function ThreadView({
 
   useEffect(load, [load]);
 
+  // Keep the newest message in view as the thread grows.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const el = threadRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [state.messages?.length, typing, rating]);
 
-  // Typing indicator flip — true while a teammate is composing. For the demo
-  // we toggle it after the user sends a message to mimic the signal.
+  // Typing dots while the other end composes; the demo signal flips shortly
+  // after the visitor sends so the state is exercised end to end.
   useEffect(() => {
-    if (!state.messages?.length) return;
+    if (!state.messages?.length) return undefined;
     const last = state.messages[state.messages.length - 1];
-    if (last?.authorRole === "customer") {
-      setTyping(true);
-      const t = setTimeout(() => setTyping(false), 3500);
-      return () => clearTimeout(t);
-    }
-  }, [state.messages?.length]);
+    if (authorKind(last?.authorRole) !== "visitor") return undefined;
+    const on = setTimeout(() => setTyping(true), 300);
+    const off = setTimeout(() => setTyping(false), 3800);
+    return () => {
+      clearTimeout(on);
+      clearTimeout(off);
+    };
+  }, [state.messages?.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function send(text) {
     const trimmed = (text ?? "").trim();
@@ -261,15 +305,13 @@ function ThreadView({
       setState((s) => ({
         ...s,
         messages: s.messages.map((m) => (m.id === optimistic.id ? saved : m)),
-        // Mark thread closed after the customer's reply if the bot resolved.
-        conversation: s.conversation ? { ...s.conversation, lastActivityAt: new Date().toISOString() } : s.conversation,
+        conversation: s.conversation
+          ? { ...s.conversation, lastActivityAt: new Date().toISOString() }
+          : s.conversation,
       }));
       onConversationsChanged?.();
     } catch {
-      setState((s) => ({
-        ...s,
-        messages: (s.messages ?? []).filter((m) => m.id !== optimistic.id),
-      }));
+      setState((s) => ({ ...s, messages: (s.messages ?? []).filter((m) => m.id !== optimistic.id) }));
       setDraft(trimmed);
     } finally {
       setSending(false);
@@ -283,189 +325,203 @@ function ThreadView({
       const result = await getApi().upload(await stripMetadata(file));
       await send(`${file.name} — ${result.url ?? ""}`);
     } catch {
-      // Composer keeps its text; a failed upload simply doesn't attach.
+      // The composer keeps its text; a failed upload simply doesn't attach.
     } finally {
       setUploading(false);
     }
   }
 
   const conv = state.conversation;
-  const isHandedOver = conv?.state === "human" || conv?.handedOverAt;
-  const isClosed = conv?.state === "closed";
+  const closed = conv?.state === "closed";
+  const handedOver = conv?.state === "human" || Boolean(conv?.handedOverAt);
+  const aiThread = !handedOver && (conv?.aiOnly ?? false);
+  const person = {
+    name: aiThread ? assistant : conv?.agentName || "Support",
+    role: closed ? "Closed" : handedOver ? "Support · typically 2m" : "Answers in seconds",
+  };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex items-center gap-2 border-b border-border px-4 py-3">
-        <button
-          type="button"
-          onClick={onBack}
-          aria-label="Back to conversations"
-          className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground hover:bg-surface-hover"
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <Avatar name={conv?.agentName || "Maya"} />
-        <span className="min-w-0 flex-1">
-          <span className="block text-sm font-semibold leading-tight">{conv?.agentName || "Maya Chen"}</span>
-          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            <span className={`h-1.5 w-1.5 rounded-full ${isClosed ? "bg-zinc-500" : "bg-emerald-400"}`} />
-            {isClosed ? "Closed" : isHandedOver ? "Northwind support · typically 2m" : "Northwind · typically 2m"}
-          </span>
-        </span>
-        <button
-          type="button"
-          aria-label="Conversations"
-          className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground hover:bg-surface-hover"
-          onClick={onBack}
-        >
-          <span className="text-base">⋯</span>
-        </button>
-      </header>
+    <>
+      {closed ? (
+        <header className="gc-header gc-header--bar">
+          <Avatar name={person.name} size="sm" />
+          <span className="gc-header__title">{person.name}</span>
+          <StatusPill status="closed" />
+        </header>
+      ) : (
+        <HeaderBar onBack={onBack}>
+          {aiThread ? (
+            <div className="gc-avatar" aria-hidden="true">
+              <Sparkles size={14} />
+            </div>
+          ) : (
+            <Avatar name={person.name} showStatus online />
+          )}
+          <div className="gc-header__ident">
+            <div className="gc-header__identtop">
+              <span className="gc-header__name">{person.name}</span>
+              {aiThread ? <AiBadge /> : null}
+            </div>
+            <span className="gc-header__sub">{person.role}</span>
+          </div>
+          {aiThread ? (
+            <button
+              type="button"
+              className="gc-ghostbtn"
+              onClick={() => send("I'd like to talk to a person, please.")}
+            >
+              <User />
+              Get a human
+            </button>
+          ) : null}
+        </HeaderBar>
+      )}
 
-      {isHandedOver ? (
-        <Banner tone="info" text="Aria handed this thread to Maya · just now" />
-      ) : null}
-      {isClosed ? (
-        <Banner tone="muted" text={`Closed ${formatTime(conv?.closedAt) || "earlier"}`} />
-      ) : null}
+      {handedOver && !closed ? <Banner tone="info">{assistant} handed this thread to a teammate</Banner> : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+      <div
+        ref={threadRef}
+        className={aiThread && !closed ? "gc-thread" : "gc-thread gc-thread--tight"}
+        role="log"
+        aria-label={`Conversation with ${person.name}`}
+      >
         {state.status === "loading" ? (
           <LoadingState label="Loading messages…" />
         ) : state.status === "failed" ? (
-          <ErrorState title="Couldn't load this conversation" onRetry={load} />
+          <ErrorState
+            title="Couldn't load this conversation"
+            onRetry={() => {
+              setState((s) => ({ ...s, status: "loading" }));
+              load();
+            }}
+          />
         ) : state.messages.length === 0 ? (
-          <EmptyState title="Say hello 👋" hint="Your team will reply right here." />
+          <div className="gc-state">
+            <p className="gc-state__title">Say hello</p>
+            <p className="gc-state__hint">Your team will reply right here.</p>
+          </div>
         ) : (
-          <ul className="flex flex-col gap-3">
+          <>
+            {conv?.createdAt ? (
+              <div className="gc-daymark">
+                {new Date(conv.createdAt).toLocaleDateString([], { month: "short", day: "numeric" })}{" "}
+                {formatTime(conv.createdAt)}
+              </div>
+            ) : null}
+
             {state.messages.map((m) => (
-              <li key={m.id} className={`flex ${m.authorRole === "customer" ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[80%] rounded-xl px-3 py-2 text-sm ${m.authorRole === "customer" ? "rounded-br-sm bg-primary text-primary-foreground" : "rounded-bl-sm bg-surface-card"}`}>
-                  {m.authorRole !== "customer" && m.authorName ? (
-                    <p className="mb-1 text-xs font-semibold opacity-80">{m.authorName}</p>
-                  ) : null}
-                  <MarkdownView
-                    text={m.body}
-                    className={m.authorRole === "customer" ? "[&_a]:text-primary-foreground [&_code]:bg-primary-foreground/10" : ""}
-                  />
-                  {(m.attachments || []).length ? (
-                    <ul className="mt-1 space-y-0.5 text-xs underline underline-offset-2">
-                      {m.attachments.map((a) => (
-                        <li key={a.url}>
-                          <a href={a.url} target="_blank" rel="noopener noreferrer nofollow">
-                            {a.name || a.url}
-                          </a>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  <p className="mt-1 text-right text-[10px] opacity-70">
-                    {formatTime(m.createdAt)}{" "}
-                    {m.authorRole === "customer" && m.readAt ? <span> · Read {formatTime(m.readAt)}</span> : null}
-                  </p>
-                </div>
-              </li>
+              <MessageRow key={m.id} message={m} />
             ))}
 
             {typing ? (
-              <li className="flex justify-start">
-                <div className="flex items-center gap-1.5 rounded-xl bg-surface-card px-3 py-2">
-                  <span className="grid h-6 w-6 place-items-center rounded-full bg-primary/15 text-[10px] font-bold uppercase text-primary">
-                    {initials(conv?.agentName || "Maya")}
-                  </span>
-                  <span className="flex items-center gap-0.5">
-                    <Dot delay={0} />
-                    <Dot delay={150} />
-                    <Dot delay={300} />
-                  </span>
+              <div className="gc-msgrow gc-msgrow--typing">
+                <Avatar name={person.name} size="sm" />
+                <div className="gc-typing" aria-hidden="true">
+                  <span className="gc-dot" />
+                  <span className="gc-dot" />
+                  <span className="gc-dot" />
                 </div>
-              </li>
+                <span className="gc-typing__label">{person.name} is typing</span>
+              </div>
             ) : null}
-          </ul>
+
+            {closed && !rating ? (
+              <RatingCard
+                agentName={person.name.split(" ")[0]}
+                onSubmit={(payload) => {
+                  setRating(payload);
+                  getApi()?.rate?.(conversationId, payload.score, payload.comment);
+                  onConversationsChanged?.();
+                }}
+                onSkip={() => setRating({})}
+              />
+            ) : null}
+          </>
         )}
-        <div ref={bottomRef} />
       </div>
 
-      {isClosed && !rating ? (
-        <RatingPrompt onRated={(payload) => {
-          setRating(payload);
-          getApi()?.rate?.(conversationId, payload.score, payload.comment);
-          onConversationsChanged?.();
-        }} />
-      ) : null}
+      {closed ? null : (
+        <Composer
+          placeholder={aiThread ? "Message…" : `Message ${person.name.split(" ")[0]}…`}
+          note={aiThread ? `${assistant} is an AI assistant. Ask for a person any time.` : undefined}
+          allowImages={aiThread}
+          value={draft}
+          onValueChange={setDraft}
+          sending={sending}
+          uploading={uploading}
+          onSend={send}
+          onAttach={upload}
+        />
+      )}
+    </>
+  );
+}
 
-      {!isClosed ? (
-        <form
-          className="flex items-end gap-2 border-t border-border p-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void send(draft);
-          }}
-        >
-          <label className="grid h-9 w-9 cursor-pointer place-items-center rounded-full text-muted-foreground hover:bg-surface-hover" aria-label="Attach a file">
-            <PaperclipIcon className="h-4 w-4" />
-            <input
-              type="file"
-              className="hidden"
-              accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
-              onChange={(e) => {
-                void upload(e.target.files?.[0]);
-                e.target.value = "";
-              }}
-            />
-          </label>
-          <div className="flex min-h-[40px] flex-1 items-end rounded-2xl border border-border bg-surface-card px-3 py-2 focus-within:border-border-strong">
-            <textarea
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void send(draft);
-                }
-              }}
-              placeholder="Type a reply…"
-              rows={1}
-              className="min-h-[24px] w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-              disabled={uploading || sending}
-            />
+function MessageRow({ message }) {
+  const kind = authorKind(message.authorRole);
+  const files = message.attachments || [];
+
+  if (kind === "system") {
+    return (
+      <div className="gc-rule">
+        <span className="gc-rule__label">{message.body}</span>
+      </div>
+    );
+  }
+
+  if (kind === "visitor") {
+    return (
+      <div className="gc-sent">
+        {message.body ? (
+          <div className="gc-bubble gc-bubble--user">
+            <MarkdownView text={message.body} />
+            <Attachments files={files} />
           </div>
-          <button
-            type="submit"
-            aria-label="Send"
-            disabled={!draft.trim() || sending || uploading}
-            className="grid h-9 w-9 place-items-center rounded-full bg-primary text-primary-foreground disabled:opacity-40"
-          >
-            {sending ? <Spinner className="h-4 w-4" /> : <ArrowUpIcon className="h-4 w-4" />}
-          </button>
-        </form>
-      ) : null}
+        ) : (
+          <div className="gc-bubble gc-bubble--user">
+            <Attachments files={files} />
+          </div>
+        )}
+        <span className="gc-receipt">
+          {message.readAt ? `Read ${formatTime(message.readAt)}` : formatTime(message.createdAt)}
+          <CheckCheck />
+        </span>
+      </div>
+    );
+  }
+
+  if (kind === "agent") {
+    return (
+      <div className="gc-msgrow">
+        <Avatar name={message.authorName || "Support"} size="sm" />
+        <div className="gc-bubble gc-bubble--agent">
+          <MarkdownView text={message.body} />
+          <Attachments files={files} />
+          <span className="gc-bubble__time">{formatTime(message.createdAt)}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="gc-bubble">
+      <MarkdownView text={message.body} />
+      <Attachments files={files} />
     </div>
   );
 }
 
-function Banner({ tone = "muted", text }) {
-  const map = {
-    info: "bg-primary/10 text-primary",
-    muted: "bg-surface-card text-muted-foreground",
-    warn: "bg-amber-500/10 text-amber-400",
-  };
+function Attachments({ files }) {
+  if (!files?.length) return null;
   return (
-    <div className={`flex items-center justify-center gap-2 px-3 py-1.5 text-center text-[11px] ${map[tone]}`}>
-      {text}
-    </div>
+    <ul className="gc-bubble__files">
+      {files.map((a) => (
+        <li key={a.url}>
+          <a href={a.url} target="_blank" rel="noopener noreferrer nofollow">
+            {a.name || a.url}
+          </a>
+        </li>
+      ))}
+    </ul>
   );
-}
-
-function Dot({ delay = 0 }) {
-  return (
-    <span
-      className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/60"
-      style={{ animationDelay: `${delay}ms` }}
-    />
-  );
-}
-
-function initials(name) {
-  return (name?.match(/\S/g) || ["M"]).slice(0, 2).join("").toUpperCase();
 }

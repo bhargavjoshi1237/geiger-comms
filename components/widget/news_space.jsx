@@ -1,17 +1,11 @@
 "use client";
 
-// News space (§9): published posts (comms.posts) with a simple reader.
-// Fetch results are stored as { key, rows } so a change of reader target
-// re-renders as loading without synchronous resets inside effects.
+// News — published posts with a simple reader. The canvas never drew this
+// space, so it borrows the help centre's row idiom rather than inventing a
+// third list style.
 
-import { useEffect, useState } from "react";
-import {
-  ChevronLeft,
-  ChevronRight,
-  LoadingState,
-  EmptyState,
-  ErrorState,
-} from "./widget_primitives";
+import { useCallback, useEffect, useState } from "react";
+import { ErrorState, FileText, HeaderBar, LoadingState } from "./widget_primitives";
 import { MarkdownView } from "./markdown_view";
 
 function formatDate(iso) {
@@ -24,133 +18,88 @@ function formatDate(iso) {
 }
 
 export function NewsSpace({ getApi, route, navigate }) {
-  const [result, setResult] = useState(null); // { key: "list", rows }
+  const [rows, setRows] = useState(null);
   const [failed, setFailed] = useState(false);
 
-  useEffect(() => {
-    let active = true;
-    getApi()
-      .news()
-      .then((rows) => {
-        if (active) setResult({ key: "list", rows: rows ?? [] });
-      })
-      .catch(() => {
-        if (active) setFailed(true);
-      });
-    return () => {
-      active = false;
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (route.postId) {
-    return <PostReader postId={route.postId} getApi={getApi} onBack={() => navigate({ space: "news" })} />;
-  }
-
-  const loading = !failed && !result;
-
-  function retry() {
-    setFailed(false);
+  const load = useCallback(() => {
     getApi()
       ?.news()
-      .then((rows) => setResult({ key: "list", rows: rows ?? [] }))
+      .then((result) => {
+        setRows(result ?? []);
+        setFailed(false);
+      })
       .catch(() => setFailed(true));
-  }
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex items-center gap-2 border-b border-border px-4 py-3">
-        <button
-          type="button"
-          aria-label="Back"
-          onClick={() => navigate({ space: "home" })}
-          className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground hover:bg-surface-hover"
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <h1 className="text-sm font-semibold">News</h1>
-      </header>
-      <main className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-        {loading ? (
-          <LoadingState label="Loading news…" />
-        ) : failed ? (
-          <ErrorState title="Couldn't load news" onRetry={retry} />
-        ) : result.rows.length === 0 ? (
-          <EmptyState title="No updates yet" />
-        ) : (
-          <ul className="flex flex-col">
-            {result.rows.map((p) => (
-              <li key={p.id} className="border-b border-border">
-                <button
-                  type="button"
-                  onClick={() => navigate({ space: "news", postId: p.id })}
-                  className="flex w-full items-start gap-3 px-1 py-3 text-left hover:bg-surface-hover"
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{p.title}</span>
-                    <span className="text-[11px] text-muted-foreground">{formatDate(p.publishedAt)}</span>
-                    {p.summary ? (
-                      <span className="mt-1 block line-clamp-2 text-[12px] text-muted-foreground">{p.summary}</span>
-                    ) : null}
-                  </span>
-                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </main>
-    </div>
-  );
-}
-
-function PostReader({ postId, getApi, onBack }) {
-  const [state, setState] = useState({ status: "loading", post: null });
+  }, [getApi]);
 
   useEffect(() => {
-    let active = true;
-    // The list payload already carries the body; find it client-side — there
-    // is no separate single-post endpoint.
-    getApi()
-      .news()
-      .then((rows) => {
-        if (!active) return;
-        const row = (rows ?? []).find((p) => p.id === postId);
-        setState(row ? { status: "done", post: row } : { status: "failed", post: null });
-      })
-      .catch(() => active && setState({ status: "failed", post: null }));
-    return () => {
-      active = false;
-    };
-  }, [postId]); // eslint-disable-line react-hooks/exhaustive-deps
+    load();
+  }, [load]);
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex items-center gap-2 border-b border-border px-4 py-3">
-        <button
-          type="button"
-          aria-label="Back"
-          onClick={onBack}
-          className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground hover:bg-surface-hover"
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <h1 className="text-sm font-semibold">Update</h1>
-      </header>
-      <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-        {state.status === "loading" ? (
-          <LoadingState label="Loading…" />
-        ) : state.status === "failed" ? (
-          <ErrorState title="Post not found" onRetry={onBack} />
+  const post = route.postId ? rows?.find((p) => p.id === route.postId) : null;
+
+  if (route.postId) {
+    return (
+      <>
+        <HeaderBar onBack={() => navigate({ space: "news" })}>
+          <span className="gc-header__eyebrow">UPDATE</span>
+        </HeaderBar>
+        {rows === null ? (
+          <div className="gc-panel__body">
+            <LoadingState label="Loading…" />
+          </div>
+        ) : !post ? (
+          <div className="gc-panel__body">
+            <ErrorState title="Post not found" onRetry={() => navigate({ space: "news" })} />
+          </div>
         ) : (
-          <article>
-            <h1 className="text-lg font-semibold">{state.post.title}</h1>
-            <p className="mt-1 text-xs text-muted-foreground">{formatDate(state.post.publishedAt)}</p>
-            <div className="mt-3 text-sm leading-relaxed text-foreground/90">
-              <MarkdownView text={state.post.body} />
+          <article className="gc-article">
+            <h2>{post.title}</h2>
+            <div className="gc-article__byline">
+              <span>{formatDate(post.publishedAt).toUpperCase()}</span>
+            </div>
+            <div className="gc-article__divider" />
+            <div className="gc-article__p">
+              <MarkdownView text={post.body} />
             </div>
           </article>
         )}
-      </main>
-    </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <header className="gc-listhead">
+        <span className="gc-listhead__title">What&rsquo;s new</span>
+      </header>
+
+      <div className="gc-panel__body" style={{ padding: "12px 0" }}>
+        {rows === null && !failed ? (
+          <LoadingState label="Loading news…" />
+        ) : failed ? (
+          <ErrorState title="Couldn't load news" onRetry={load} />
+        ) : rows.length === 0 ? (
+          <div className="gc-state">
+            <p className="gc-state__title">No updates yet</p>
+          </div>
+        ) : (
+          rows.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className="gc-article-row"
+              onClick={() => navigate({ space: "news", postId: p.id })}
+            >
+              <FileText size={14} className="gc-article-row__icon" />
+              <span style={{ minWidth: 0 }}>
+                <span className="gc-article-row__title">{p.title}</span>
+                {p.summary ? <span className="gc-article-row__desc">{p.summary}</span> : null}
+                <span className="gc-article-row__meta">{formatDate(p.publishedAt).toUpperCase()}</span>
+              </span>
+            </button>
+          ))
+        )}
+      </div>
+    </>
   );
 }

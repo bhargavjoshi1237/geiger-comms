@@ -20,22 +20,12 @@ function renderInline(text, keyPrefix) {
     if (token.startsWith("**")) {
       nodes.push(<strong key={key}>{token.slice(2, -2)}</strong>);
     } else if (token.startsWith("`")) {
-      nodes.push(
-        <code key={key} className="rounded bg-surface-card px-1 py-0.5 font-mono text-[0.85em]">
-          {token.slice(1, -1)}
-        </code>,
-      );
+      nodes.push(<code key={key}>{token.slice(1, -1)}</code>);
     } else if (token.startsWith("*")) {
       nodes.push(<em key={key}>{token.slice(1, -1)}</em>);
     } else {
       nodes.push(
-        <a
-          key={key}
-          href={token}
-          target="_blank"
-          rel="noopener noreferrer nofollow"
-          className="text-primary underline underline-offset-2"
-        >
+        <a key={key} href={token} target="_blank" rel="noopener noreferrer nofollow">
           {token}
         </a>,
       );
@@ -50,12 +40,12 @@ export function MarkdownView({ text = "", className = "" }) {
   const blocks = useMemo(() => String(text).replace(/\r\n/g, "\n").split(/\n{2,}/), [text]);
 
   return (
-    <div className={`space-y-2 text-sm leading-relaxed ${className}`}>
+    <div className={`gc-md ${className}`.trim()}>
       {blocks.map((block, bi) => {
         const lines = block.split("\n");
         if (lines.every((line) => /^\s*[-•]\s+/.test(line))) {
           return (
-            <ul key={bi} className="list-disc space-y-1 pl-4">
+            <ul key={bi}>
               {lines.map((line, li) => (
                 <li key={li}>{renderInline(line.replace(/^\s*[-•]\s+/, ""), `${bi}-${li}`)}</li>
               ))}

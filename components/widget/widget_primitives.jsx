@@ -1,48 +1,360 @@
 "use client";
 
-// Small shared primitives used across every widget space (spec §9). Loading,
-// empty, error, reconnecting banners, plus the inline icons we render
-// everywhere — keeping them here avoids re-defining them per screen.
+// Shared pieces every widget space renders: the icon set, avatars, chips,
+// header bars and the async states. Markup and class names come straight from
+// the messenger design (`gc-*`, styled by app/widget/widget.css) so a screen
+// only ever composes these — it never invents its own layout.
+//
+// The design canvas draws Lucide outlines at 24x24 with a 2px round stroke;
+// the path data is kept exactly so the live widget matches it pixel for pixel.
+// Icons are decorative — the control around them carries the label.
+
+/* ----------------------------------------------------------------- icons -- */
+
+function svg(size, strokeWidth, rest) {
+  return {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth,
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": true,
+    focusable: false,
+    ...rest,
+  };
+}
+
+export function MessageCircle({ size = 16, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
+    </svg>
+  );
+}
+
+// The brand mark: a chat bubble whose three message lines are the three leaning
+// strokes of the Geiger logo (public/logo1.svg), kept at the logo's own
+// 38-degree lean. Reads as "chat" at launcher size and as "Geiger" up close.
+// The loader draws the identical glyph on the host page — keep them in step.
+export function BrandBubble({ size = 24, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
+      <path d="M6.9 14.7 11.2 9.3" strokeWidth={1.6} />
+      <path d="M10.5 14.7 14.8 9.3" strokeWidth={1.6} />
+      <path d="M14.1 14.7 18.4 9.3" strokeWidth={1.6} />
+    </svg>
+  );
+}
+
+export function Sparkles({ size = 16, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
+      <path d="M20 2v4" />
+      <path d="M22 4h-4" />
+      <circle cx="4" cy="20" r="2" />
+    </svg>
+  );
+}
+
+export function X({ size = 15, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </svg>
+  );
+}
+
+export function ChevronRight({ size = 15, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  );
+}
+
+export function ChevronLeft({ size = 16, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="m15 18-6-6 6-6" />
+    </svg>
+  );
+}
+
+export function Search({ size = 14, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="m21 21-4.34-4.34" />
+      <circle cx="11" cy="11" r="8" />
+    </svg>
+  );
+}
+
+export function Mail({ size = 16, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7" />
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+    </svg>
+  );
+}
+
+export function BookHeart({ size = 16, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="M12 5v16" />
+      <path d="M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z" />
+    </svg>
+  );
+}
+
+export function User({ size = 12, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <circle cx="12" cy="8" r="5" />
+      <path d="M20 21a8 8 0 0 0-16 0" />
+    </svg>
+  );
+}
+
+export function FileText({ size = 11, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
+      <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+      <path d="M16 13H8" />
+      <path d="M16 17H8" />
+    </svg>
+  );
+}
+
+export function ThumbsUp({ size = 12, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />
+      <path d="M7 10v12" />
+    </svg>
+  );
+}
+
+export function Paperclip({ size = 15, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551" />
+    </svg>
+  );
+}
+
+export function ImageIcon({ size = 15, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+    </svg>
+  );
+}
+
+export function ArrowUp({ size = 14, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="m5 12 7-7 7 7" />
+      <path d="M12 19V5" />
+    </svg>
+  );
+}
+
+export function CheckCheck({ size = 12, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="M18 6 7 17l-5-5" />
+      <path d="m22 10-7.5 7.5L13 16" />
+    </svg>
+  );
+}
+
+export function Plus({ size = 13, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="M5 12h14" />
+      <path d="M12 5v14" />
+    </svg>
+  );
+}
+
+export function Clock({ size = 14, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 6v6l4 2" />
+    </svg>
+  );
+}
+
+export function CircleCheck({ size = 9, strokeWidth = 3, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="M21.801 10A10 10 0 1 1 17 3.335" />
+      <path d="m9 11 3 3L22 4" />
+    </svg>
+  );
+}
+
+export function ArrowUpRight({ size = 14, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="M7 7h10v10" />
+      <path d="M7 17 17 7" />
+    </svg>
+  );
+}
+
+export function Star({ size = 18, strokeWidth = 1.8, filled = false, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)} fill={filled ? "currentColor" : "none"}>
+      <path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z" />
+    </svg>
+  );
+}
+
+/* ---------------------------------------------------------------- avatar -- */
+
+export function initialsOf(name) {
+  const words = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return "?";
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+}
+
+export function Avatar({ name = "", size = "md", online = false, showStatus = false }) {
+  const cls = size === "md" ? "gc-avatar" : `gc-avatar gc-avatar--${size}`;
+  const dot = <div className={cls}>{initialsOf(name)}</div>;
+  if (!showStatus || !online) return dot;
+  return (
+    <div className="gc-avatar-wrap">
+      {dot}
+      <span className="gc-online-dot" />
+      <span className="gc-sr">{name} is online</span>
+    </div>
+  );
+}
+
+export function AvatarStack({ people = [] }) {
+  return (
+    <div className="gc-avatar-stack">
+      {people.slice(0, 3).map((p, i) => (
+        <div key={p.id || p.name || i} className="gc-avatar">
+          {initialsOf(p.name)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------- chips -- */
+
+export function AiBadge() {
+  return (
+    <span className="gc-badge-ai" title="Answered by AI">
+      AI
+    </span>
+  );
+}
+
+export function Cap({ children }) {
+  return <span className="gc-cap">{children}</span>;
+}
+
+// Conversation status. `closed` earns a tick; `open` a green dot.
+export function StatusPill({ status }) {
+  if (status === "open") {
+    return (
+      <span className="gc-pill gc-pill--open">
+        <span className="gc-pill__dot" />
+        Open
+      </span>
+    );
+  }
+  return (
+    <span className="gc-pill">
+      {status === "closed" ? <CircleCheck /> : null}
+      {status === "closed" ? "Closed" : "Waiting on you"}
+    </span>
+  );
+}
+
+export function UnreadCount({ count }) {
+  return (
+    <span className="gc-count">
+      {count}
+      <span className="gc-sr"> unread messages</span>
+    </span>
+  );
+}
+
+/* --------------------------------------------------------------- headers -- */
+
+// The back / title / action bar every sub-screen shares.
+export function HeaderBar({ onBack, onClose, children, action }) {
+  return (
+    <header className="gc-header gc-header--bar">
+      {onBack ? (
+        <button type="button" className="gc-iconbtn gc-iconbtn--sm" onClick={onBack} aria-label="Back">
+          <ChevronLeft />
+        </button>
+      ) : null}
+      {children}
+      {action}
+      {onClose ? (
+        <button
+          type="button"
+          className="gc-iconbtn gc-iconbtn--sm"
+          onClick={onClose}
+          aria-label="Close messenger"
+        >
+          <X />
+        </button>
+      ) : null}
+    </header>
+  );
+}
+
+/* ----------------------------------------------------------------- states -- */
 
 export function Spinner({ className = "" }) {
-  return (
-    <span
-      className={`inline-block size-4 animate-spin rounded-full border-2 border-border border-t-foreground ${className}`}
-      role="status"
-      aria-label="Loading"
-    />
-  );
+  return <span className={`gc-spinner ${className}`.trim()} role="status" aria-label="Loading" />;
 }
 
 export function LoadingState({ label = "Loading…" }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground">
+    <div className="gc-state">
       <Spinner />
-      <span className="text-xs">{label}</span>
+      <p className="gc-state__hint">{label}</p>
     </div>
   );
 }
 
 export function EmptyState({ title, hint }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-1 px-6 py-10 text-center">
-      <p className="text-sm font-medium">{title}</p>
-      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+    <div className="gc-state">
+      <p className="gc-state__title">{title}</p>
+      {hint ? <p className="gc-state__hint">{hint}</p> : null}
     </div>
   );
 }
 
 export function ErrorState({ title = "Something went wrong", hint, onRetry }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 px-6 py-10 text-center">
-      <p className="text-sm font-medium text-red-400">{title}</p>
-      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+    <div className="gc-state gc-state--error">
+      <p className="gc-state__title">{title}</p>
+      {hint ? <p className="gc-state__hint">{hint}</p> : null}
       {onRetry ? (
-        <button
-          type="button"
-          onClick={onRetry}
-          className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"
-        >
+        <button type="button" className="gc-outlinebtn" onClick={onRetry}>
           Try again
         </button>
       ) : null}
@@ -54,286 +366,13 @@ export function ErrorState({ title = "Something went wrong", hint, onRetry }) {
 export function ReconnectingBanner({ visible }) {
   if (!visible) return null;
   return (
-    <div className="flex items-center justify-center gap-2 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-400">
-      <Spinner className="size-3" />
+    <div className="gc-banner gc-banner--warn">
+      <Spinner className="gc-spinner--sm" />
       Reconnecting…
     </div>
   );
 }
 
-/* ---------- Inline icon set (single-stroke, currentColor) ---------- */
-const stroke = {
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth: 1.6,
-  strokeLinecap: "round",
-  strokeLinejoin: "round",
-};
-
-export function ChevronLeft({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M15 18l-6-6 6-6" />
-    </svg>
-  );
-}
-
-export function ChevronRight({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M9 18l6-6-6-6" />
-    </svg>
-  );
-}
-
-export function ChevronUp({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M6 15l6-6 6 6" />
-    </svg>
-  );
-}
-
-export function ChevronDown({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M6 9l6 6 6-6" />
-    </svg>
-  );
-}
-
-export function SearchIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <circle cx="11" cy="11" r="7" />
-      <path d="M20 20l-3.5-3.5" />
-    </svg>
-  );
-}
-
-export function SparklesIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8" />
-    </svg>
-  );
-}
-
-export function PackageIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-      <path d="M3.3 7L12 12l8.7-5M12 22V12" />
-    </svg>
-  );
-}
-
-export function UndoIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M3 7v6h6M3 13a9 9 0 1 0 3-7" />
-    </svg>
-  );
-}
-
-export function ReceiptIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M5 3h14v18l-3-2-3 2-3-2-3 2-2-2z" />
-      <path d="M8 8h8M8 12h8M8 16h5" />
-    </svg>
-  );
-}
-
-export function UserIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <circle cx="12" cy="8" r="4" />
-      <path d="M4 21a8 8 0 0 1 16 0" />
-    </svg>
-  );
-}
-
-export function HomeIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M3 11l9-8 9 8" />
-      <path d="M5 10v10h14V10" />
-    </svg>
-  );
-}
-
-export function MessageIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8A8.5 8.5 0 0 1 12 3a8.5 8.5 0 0 1 9 8.5z" />
-    </svg>
-  );
-}
-
-export function BookIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M4 4a2 2 0 0 1 2-2h12v18H6a2 2 0 0 0-2 2z" />
-      <path d="M4 4v16a2 2 0 0 0 2 2h12" />
-    </svg>
-  );
-}
-
-export function BellIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9z" />
-      <path d="M10 21a2 2 0 0 0 4 0" />
-    </svg>
-  );
-}
-
-export function PaperclipIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M21.4 11.6l-9.2 9.2a5 5 0 0 1-7-7l9.2-9.2a3.5 3.5 0 0 1 4.9 4.9l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" />
-    </svg>
-  );
-}
-
-export function ArrowUpIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M12 19V5M5 12l7-7 7 7" />
-    </svg>
-  );
-}
-
-export function ArrowUpCircle({ className = "h-10 w-10" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" fill="currentColor">
-      <circle cx="12" cy="12" r="11" fill="currentColor" />
-      <path d="M12 7v10M7 12l5-5 5 5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-    </svg>
-  );
-}
-
-export function XIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M6 6l12 12M6 18L18 6" />
-    </svg>
-  );
-}
-
-export function UserCheckIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <circle cx="9" cy="8" r="4" />
-      <path d="M2 21a7 7 0 0 1 14 0" />
-      <path d="M16 11l2 2 4-4" />
-    </svg>
-  );
-}
-
-export function ThumbsUpIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M7 10v11M7 10l5-8a2 2 0 0 1 2 2v4h5a2 2 0 0 1 2 2.3l-1 7a2 2 0 0 1-2 1.7H7" />
-    </svg>
-  );
-}
-
-export function ThumbsDownIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M7 14V3M7 14l5 8a2 2 0 0 0 2-2v-4h5a2 2 0 0 0 2-2.3l-1-7A2 2 0 0 0 18 5H7" />
-    </svg>
-  );
-}
-
-export function PhoneIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.7 19.7 0 0 1-8.6-3.1 19.4 19.4 0 0 1-6-6A19.7 19.7 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.7a16 16 0 0 0 6 6l1.1-1.1a2 2 0 0 1 2.1-.5 13 13 0 0 0 2.8.7A2 2 0 0 1 22 16.9z" />
-    </svg>
-  );
-}
-
-export function StarIcon({ className = "h-5 w-5", filled = false }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" fill={filled ? "currentColor" : "none"} {...stroke}>
-      <path d="M12 3l2.7 5.6 6.3.9-4.5 4.4 1.1 6.3L12 17.7 6.4 20.2l1.1-6.3L3 9.5l6.3-.9z" />
-    </svg>
-  );
-}
-
-export function ImageIcon({ className = "h-12 w-12" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <circle cx="9" cy="9" r="2" />
-      <path d="M21 15l-5-5L5 21" />
-    </svg>
-  );
-}
-
-export function ClockIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 7v5l3 2" />
-    </svg>
-  );
-}
-
-export function SendIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M22 2L11 13M22 2l-7 20-4-9-9-4z" />
-    </svg>
-  );
-}
-
-export function CheckIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M5 12l4 4L19 7" />
-    </svg>
-  );
-}
-
-export function PlusIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <path d="M12 5v14M5 12h14" />
-    </svg>
-  );
-}
-
-export function InfoIcon({ className = "h-4 w-4" }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" {...stroke}>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 16v-4M12 8h.01" />
-    </svg>
-  );
-}
-
-export function AvatarStack({ users = [], size = 18 }) {
-  return (
-    <span className="flex -space-x-1.5">
-      {users.slice(0, 3).map((u, i) => (
-        <span
-          key={u.id || i}
-          className="inline-block rounded-full ring-2 ring-background"
-          style={{ width: size, height: size }}
-        >
-          <span
-            className="grid h-full w-full place-items-center rounded-full text-[10px] font-bold text-white"
-            style={{ background: `hsl(${(u.name?.charCodeAt(0) || 0) % 360}, 60%, 35%)` }}
-            aria-hidden="true"
-          >
-            {(u.name || "?").match(/\S/g)?.slice(0, 2).join("").toUpperCase() || "?"}
-          </span>
-        </span>
-      ))}
-    </span>
-  );
+export function Banner({ tone = "muted", children }) {
+  return <div className={tone === "muted" ? "gc-banner" : `gc-banner gc-banner--${tone}`}>{children}</div>;
 }

@@ -1,309 +1,222 @@
 "use client";
 
-// AI "Ask" space — the answer card layout from the spec. Instead of long chat
-// bubbles, the AI returns a single AnswerCard payload:
-//   { query, summary, steps[], sources[], followUps[], hero, topArticles[] }
-// The view reads top-down: greeting + match summary, numbered step list with
-// citations, a sources rail, related follow-up chips, and at the bottom a
-// sticky AskBar that grows upward while typing and collapses back into a pill.
-//
-// A failed ask falls back to a "we couldn't reach Aria" card with a Talk to
-// person option; the upstream layer is allowed to take over hand-over.
+// Ask — the AI thread. The API answers with a card
+// ({ summary, steps, sources, followUps, topArticles }); the screen renders it
+// as one assistant bubble in the drawn thread, with the numbered steps and the
+// cited sources inside it, follow-ups as quick replies underneath, and the
+// standard composer with the AI disclosure note below the box.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ArrowUpCircle,
-  ChevronLeft,
-  ArrowUpIcon,
-  SparklesIcon,
-  Spinner,
-  LoadingState,
+  AiBadge,
+  Cap,
   ErrorState,
-  SearchIcon,
+  FileText,
+  HeaderBar,
+  LoadingState,
+  Sparkles,
+  ThumbsUp,
+  User,
 } from "./widget_primitives";
+import { Composer } from "./composer";
 
-function initials(name) {
-  return (name?.match(/\S/g) || ["A"]).slice(0, 2).join("").toUpperCase();
-}
+export function AskSpace({ getApi, config, route, navigate }) {
+  // A query carried in on the route (from Home or Help) opens the thread with
+  // the question already on screen; the effect below only runs the request.
+  const [opening] = useState(() => (route.query ? { id: "t-0", question: route.query } : null));
+  const [turns, setTurns] = useState(() =>
+    opening ? [{ ...opening, answer: null, failed: false }] : [],
+  );
+  const [pending, setPending] = useState(Boolean(opening));
+  const [feedback, setFeedback] = useState({});
+  const threadRef = useRef(null);
+  const started = useRef(false);
 
-export function AskSpace({ getApi, route, navigate, postToHost }) {
-  const query = route.query || "";
-  const initialQuery = useMemo(() => query, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const [answer, setAnswer] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [askbarOpen, setAskbarOpen] = useState(false);
-  const inputRef = useRef(null);
-  const requestedAt = useRef(initialQuery);
+  const assistant = config?.assistantName || "Aria";
 
-  const ask = useCallback(
-    (q) => {
-      const text = (q ?? "").trim();
-      if (!text) return;
-      requestedAt.current = text;
-      setLoading(true);
-      setAnswer(null);
-      setFailed(false);
-      navigate({ space: "ask", query: text });
+  const run = useCallback(
+    (id, query) => {
       getApi()
-        ?.ask(text)
+        ?.ask(query)
         .then((card) => {
-          if (requestedAt.current !== text) return;
-          if (!card) {
-            setFailed(true);
-            setLoading(false);
-            return;
-          }
-          setAnswer(card);
-          setLoading(false);
+          setTurns((prev) =>
+            prev.map((t) => (t.id === id ? { ...t, answer: card ?? null, failed: !card } : t)),
+          );
         })
         .catch(() => {
-          if (requestedAt.current !== text) return;
-          setFailed(true);
-          setLoading(false);
-        });
+          setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, failed: true } : t)));
+        })
+        .finally(() => setPending(false));
     },
-    [getApi, navigate],
+    [getApi],
+  );
+
+  const ask = useCallback(
+    (text) => {
+      const query = String(text || "").trim();
+      if (!query) return;
+      const id = `t-${Date.now()}`;
+      setTurns((prev) => [...prev, { id, question: query, answer: null, failed: false }]);
+      setPending(true);
+      run(id, query);
+    },
+    [run],
   );
 
   useEffect(() => {
-    if (!initialQuery) {
-      setLoading(false);
-      return;
-    }
-    ask(initialQuery);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (started.current || !opening) return;
+    started.current = true;
+    run(opening.id, opening.question);
+  }, [run, opening]);
 
-  function followUp(text) {
-    setAskbarOpen(false);
-    setDraft("");
-    ask(text);
-  }
+  useEffect(() => {
+    const el = threadRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [turns, pending]);
 
-  function submit(e) {
-    e.preventDefault();
-    if (!draft.trim()) return;
-    const text = draft.trim();
-    followUp(text);
-  }
+  const lastAnswer = [...turns].reverse().find((t) => t.answer)?.answer;
+  const followUps = lastAnswer?.followUps || [];
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
-        <span className="flex items-center gap-2.5">
-          <button
-            type="button"
-            aria-label="Back to Home"
-            onClick={() => navigate({ space: "home" })}
-            className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground hover:bg-surface-hover"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <span className="grid h-7 w-7 place-items-center rounded-full bg-primary/10 text-primary">
-            <SparklesIcon className="h-4 w-4" />
-          </span>
-          <span>
-            <span className="block text-sm font-semibold leading-tight">Aria</span>
-            <span className="text-[11px] text-muted-foreground">
-              {failed
-                ? "Couldn't reach Aria"
-                : loading
-                  ? "Thinking…"
-                  : "Northwind · answers in seconds"}
-            </span>
-          </span>
-        </span>
+    <>
+      <HeaderBar onBack={() => navigate({ space: "home" })}>
+        <div className="gc-avatar" aria-hidden="true">
+          <Sparkles size={14} />
+        </div>
+        <div className="gc-header__ident">
+          <div className="gc-header__identtop">
+            <span className="gc-header__name">{assistant}</span>
+            <AiBadge />
+          </div>
+          <span className="gc-header__sub">{pending ? "Thinking…" : "Answers in seconds"}</span>
+        </div>
         <button
           type="button"
-          onClick={() => navigate({ space: "messages", draft: `I'd like to talk to a person about: ${query}` })}
-          className="rounded-full border border-border px-3 py-1.5 text-[11px] font-medium hover:bg-surface-hover"
+          className="gc-ghostbtn"
+          onClick={() =>
+            navigate({
+              space: "messages",
+              newAbout: "other",
+              newLabel: "Something else",
+              draft: turns[turns.length - 1]?.question || "",
+            })
+          }
         >
+          <User />
           Get a human
         </button>
-      </header>
+      </HeaderBar>
 
-      <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-32 pt-3">
-        {/* The user's question, rendered as a single bubble for context. */}
-        {initialQuery ? (
-          <div className="ml-auto mb-4 max-w-[80%] rounded-2xl bg-surface-card px-3 py-2 text-sm">
-            {initialQuery}
+      <div ref={threadRef} className="gc-thread" role="log" aria-label={`Conversation with ${assistant}`}>
+        {turns.length === 0 && !pending ? (
+          <div className="gc-bubble gc-bubble--sys">
+            Ask me anything about your order, a return or your account.
           </div>
         ) : null}
 
-        {/* The answer card itself */}
-        {loading ? (
-          <LoadingState label="Aria is reading your question…" />
-        ) : failed ? (
-          <ErrorState
-            title="Aria is offline"
-            hint="A teammate can pick this up right now."
-            onRetry={() => navigate({ space: "messages", draft: `I'd like help with: ${query}` })}
-          />
-        ) : answer ? (
-          <AnswerCard answer={answer} onFollowUp={followUp} onOpenArticle={(id) => navigate({ space: "help", articleId: id })} />
-        ) : (
-          <p className="text-sm text-muted-foreground">Type a question to start.</p>
-        )}
-      </main>
-
-      {/* The sticky AskBar — collapsed pill (left) and typing / expanded state. */}
-      <div className="sticky bottom-0 z-10 border-t border-border bg-background/80 px-3 py-3 backdrop-blur">
-        {!askbarOpen ? (
-          <button
-            type="button"
-            onClick={() => {
-              setAskbarOpen(true);
-              requestAnimationFrame(() => inputRef.current?.focus());
-            }}
-            className="flex w-full items-center gap-2.5 rounded-full border border-border bg-surface-card py-2.5 pr-3 pl-4 text-left text-sm hover:bg-surface-hover"
-          >
-            <span className="grid h-6 w-6 place-items-center rounded-full bg-primary/10 text-primary">
-              <SparklesIcon className="h-3.5 w-3.5" />
-            </span>
-            <span className="text-muted-foreground">Ask Aria anything…</span>
-          </button>
-        ) : (
-          <form onSubmit={submit} className="flex items-end gap-2">
-            <div className="flex min-h-[44px] flex-1 items-end gap-2 rounded-2xl border border-border bg-surface-card px-3 py-2 focus-within:border-border-strong">
-              <SearchIcon className="mb-2 h-4 w-4 text-muted-foreground" />
-              <textarea
-                ref={inputRef}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    submit(e);
-                  }
-                  if (e.key === "Escape") {
-                    setAskbarOpen(false);
-                  }
-                }}
-                placeholder="Ask Aria anything…"
-                rows={1}
-                className="min-h-[24px] w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+        {turns.map((turn) => (
+          <div key={turn.id} style={{ display: "contents" }}>
+            <div className="gc-bubble gc-bubble--user">{turn.question}</div>
+            {turn.failed ? (
+              <ErrorState
+                title={`${assistant} is offline`}
+                hint="A teammate can pick this up right now."
+                onRetry={() =>
+                  navigate({ space: "messages", newAbout: "other", draft: turn.question })
+                }
               />
-            </div>
-            <button
-              type="submit"
-              aria-label="Send"
-              disabled={!draft.trim()}
-              className="grid h-11 w-11 place-items-center rounded-full bg-primary text-primary-foreground disabled:opacity-40"
-            >
-              <ArrowUpIcon className="h-4 w-4" />
-            </button>
-          </form>
-        )}
-      </div>
-    </div>
-  );
-}
+            ) : turn.answer ? (
+              <>
+                <div className="gc-bubble">
+                  <AnswerBody
+                    answer={turn.answer}
+                    onOpenArticle={(id) => navigate({ space: "help", articleId: id })}
+                  />
+                </div>
+                <div className="gc-feedback">
+                  <span className="gc-feedback__label">Was this helpful?</span>
+                  <button
+                    type="button"
+                    className="gc-thumb gc-thumb--up"
+                    aria-pressed={feedback[turn.id] === true}
+                    onClick={() => setFeedback((f) => ({ ...f, [turn.id]: true }))}
+                    aria-label="Helpful"
+                  >
+                    <ThumbsUp />
+                  </button>
+                  <button
+                    type="button"
+                    className="gc-thumb gc-thumb--down"
+                    aria-pressed={feedback[turn.id] === false}
+                    onClick={() => setFeedback((f) => ({ ...f, [turn.id]: false }))}
+                    aria-label="Not helpful"
+                  >
+                    <ThumbsUp />
+                  </button>
+                </div>
+              </>
+            ) : (
+              <LoadingState label={`${assistant} is reading your question…`} />
+            )}
+          </div>
+        ))}
 
-function AnswerCard({ answer, onFollowUp, onOpenArticle }) {
-  const summary = answer.summary || "";
-  const steps = answer.steps || [];
-  const sources = answer.sources || [];
-  const followUps = answer.followUps || [];
-  const articles = answer.topArticles || [];
-
-  return (
-    <article className="space-y-4">
-      <header>
-        <h1 className="text-[15px] font-semibold leading-snug">{summary.split("\n")[0]}</h1>
-        {summary.split("\n").slice(1).join("\n").trim() ? (
-          <p className="mt-2 text-sm leading-relaxed text-foreground/90">
-            {summary.split("\n").slice(1).join("\n").trim()}
-          </p>
-        ) : null}
-      </header>
-
-      {steps.length ? (
-        <section>
-          <h2 className="mb-2 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-            Try this
-          </h2>
-          <ol className="space-y-2">
-            {steps.map((step, i) => (
-              <li key={i} className="flex items-start gap-3 rounded-lg bg-surface-card px-3 py-2 text-sm">
-                <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-primary/15 text-[11px] font-bold text-primary">
-                  {i + 1}
-                </span>
-                <span className="leading-relaxed">{step.text}</span>
-              </li>
-            ))}
-          </ol>
-        </section>
-      ) : null}
-
-      {sources.length ? (
-        <section>
-          <h2 className="mb-2 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-            Sources
-          </h2>
-          <ul className="flex flex-col gap-1.5">
-            {sources.map((s, i) => (
-              <li key={i}>
-                <button
-                  type="button"
-                  onClick={() => s.articleId && onOpenArticle(s.articleId)}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-surface-hover"
-                >
-                  <span className="grid h-5 w-5 place-items-center rounded bg-surface-subtle text-[10px] font-bold uppercase text-muted-foreground">
-                    {s.icon || "📄"}
-                  </span>
-                  <span className="flex-1 truncate font-medium">{s.title}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      {followUps.length ? (
-        <section>
-          <h2 className="mb-2 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-            Was this helpful?
-          </h2>
-          <div className="flex flex-wrap gap-2">
-            {followUps.map((c, i) => (
-              <button
-                key={i}
-                type="button"
-                onClick={() => onFollowUp(c.label)}
-                className="rounded-full border border-border bg-surface-card px-3 py-1.5 text-[12px] font-medium hover:bg-surface-hover"
-              >
-                {c.label}
+        {followUps.length && !pending ? (
+          <div className="gc-replies">
+            {followUps.map((f, i) => (
+              <button key={i} type="button" className="gc-reply" onClick={() => ask(f.label)}>
+                {f.label}
               </button>
             ))}
           </div>
-        </section>
-      ) : null}
+        ) : null}
+      </div>
 
-      {articles.length ? (
-        <section className="rounded-lg border border-border bg-surface-card p-3">
-          <h3 className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-            Related articles
-          </h3>
-          <ul className="mt-2 flex flex-col">
-            {articles.map((a) => (
-              <li key={a.id}>
-                <button
-                  type="button"
-                  onClick={() => onOpenArticle(a.id)}
-                  className="flex w-full items-center justify-between py-1.5 text-left text-[13px] hover:underline"
-                >
-                  <span className="truncate font-medium">{a.title}</span>
-                  <span className="ml-3 text-[11px] text-muted-foreground">
-                    {Math.max(1, Math.round((a.readMinutes || 1)))} min read
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
+      <Composer
+        placeholder="Message…"
+        note={`${assistant} is an AI assistant. Ask for a person any time.`}
+        allowImages={false}
+        sending={pending}
+        onSend={ask}
+      />
+    </>
+  );
+}
+
+function AnswerBody({ answer, onOpenArticle }) {
+  const summary = answer.summary || "";
+  const steps = answer.steps || [];
+  const sources = answer.sources || [];
+
+  return (
+    <>
+      {summary}
+      {steps.length ? (
+        <ol className="gc-steps">
+          {steps.map((step, i) => (
+            <li key={i} className="gc-step" style={{ listStyle: "none" }}>
+              <span className="gc-step__n">{i + 1}</span>
+              {step.text}
+            </li>
+          ))}
+        </ol>
       ) : null}
-    </article>
+      {sources.length ? (
+        <div className="gc-sources">
+          <Cap>Sources</Cap>
+          {sources.map((source, i) => (
+            <button
+              key={source.articleId || i}
+              type="button"
+              className="gc-source"
+              onClick={() => source.articleId && onOpenArticle(source.articleId)}
+            >
+              <FileText />
+              {source.title}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </>
   );
 }

@@ -1,102 +1,76 @@
 "use client";
 
-// Tickets space (§9): the caller's tickets, read-only (Inbox spec owns
-// authoring and state transitions).
+// Tickets — the caller's tickets, read-only (the Inbox spec owns authoring and
+// state transitions). Rows reuse the conversation-row shell so the space sits
+// in the same visual family as Messages.
 
-import { useEffect, useState } from "react";
-import {
-  ChevronLeft,
-  ChevronRight,
-  LoadingState,
-  EmptyState,
-  ErrorState,
-} from "./widget_primitives";
+import { useCallback, useEffect, useState } from "react";
+import { ErrorState, LoadingState, StatusPill } from "./widget_primitives";
 import { MarkdownView } from "./markdown_view";
 
-const STATE_LABELS = {
-  submitted: "Submitted",
-  in_progress: "In progress",
-  waiting: "Waiting",
-  resolved: "Resolved",
+// Ticket states map onto the three pills the design draws.
+const PILL = {
+  submitted: "waiting",
+  in_progress: "open",
+  waiting: "waiting",
+  resolved: "closed",
 };
 
-export function TicketsSpace({ getApi, navigate }) {
-  // status: loading | done | failed — set only from async callbacks so the
-  // mount effect never calls setState synchronously.
-  const [state, setState] = useState({ status: "loading", rows: [] });
+export function TicketsSpace({ getApi }) {
+  const [rows, setRows] = useState(null);
+  const [failed, setFailed] = useState(false);
 
-  useEffect(() => {
-    let active = true;
-    getApi()
-      .tickets()
-      .then((rows) => {
-        if (active) setState({ status: rows ? "done" : "failed", rows: rows ?? [] });
-      })
-      .catch(() => {
-        if (active) setState({ status: "failed", rows: [] });
-      });
-    return () => {
-      active = false;
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  function retry() {
-    setState((prev) => ({ ...prev, status: "loading" }));
+  const load = useCallback(() => {
     getApi()
       ?.tickets()
-      .then((rows) => setState({ status: rows ? "done" : "failed", rows: rows ?? [] }))
-      .catch(() => setState({ status: "failed", rows: [] }));
-  }
+      .then((result) => {
+        setRows(result ?? []);
+        setFailed(false);
+      })
+      .catch(() => setFailed(true));
+  }, [getApi]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex items-center gap-2 border-b border-border px-4 py-3">
-        <button
-          type="button"
-          aria-label="Back"
-          onClick={() => navigate({ space: "home" })}
-          className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground hover:bg-surface-hover"
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <h1 className="text-sm font-semibold">Your tickets</h1>
+    <>
+      <header className="gc-listhead">
+        <span className="gc-listhead__title">Your tickets</span>
       </header>
-      <main className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-        {state.status === "loading" ? (
+
+      <div className="gc-panel__body gc-panel__body--stack">
+        {rows === null && !failed ? (
           <LoadingState label="Loading tickets…" />
-        ) : state.status === "failed" ? (
-          <ErrorState title="Couldn't load your tickets" onRetry={retry} />
-        ) : state.rows.length === 0 ? (
-          <EmptyState title="No tickets yet" hint="Requests your team tracks for you will appear here." />
+        ) : failed ? (
+          <ErrorState title="Couldn't load your tickets" onRetry={load} />
+        ) : rows.length === 0 ? (
+          <div className="gc-state">
+            <p className="gc-state__title">No tickets yet</p>
+            <p className="gc-state__hint">Requests your team tracks for you will appear here.</p>
+          </div>
         ) : (
-          <ul className="flex flex-col gap-2">
-            {state.rows.map((t) => (
-              <li key={t.id} className="rounded-lg border border-border bg-surface-card p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-medium">{t.title || "Ticket"}</span>
-                  <span className="shrink-0 rounded-full bg-surface-hover px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                    {STATE_LABELS[t.state] || t.state}
-                  </span>
+          rows.map((t) => (
+            <div key={t.id} className="gc-convo" data-closed={t.state === "resolved"}>
+              <div className="gc-convo__body">
+                <div className="gc-convo__top">
+                  <span className="gc-convo__title">{t.title || "Ticket"}</span>
+                  <span className="gc-convo__time">{t.reference ? `#${t.reference}` : ""}</span>
                 </div>
                 {t.description ? (
-                  <div className="mt-1.5 line-clamp-3 text-xs text-muted-foreground">
+                  <div className="gc-convo__preview">
                     <MarkdownView text={t.description} />
                   </div>
                 ) : null}
-                <div className="mt-2 flex items-center justify-end text-[11px] text-muted-foreground">
-                  <button
-                    type="button"
-                    onClick={() => navigate({ space: "tickets", ticketId: t.id })}
-                    className="flex items-center gap-1 hover:text-foreground"
-                  >
-                    View details <ChevronRight className="h-3 w-3" />
-                  </button>
+                <div className="gc-convo__meta">
+                  <StatusPill status={PILL[t.state] || "open"} />
                 </div>
-              </li>
-            ))}
-          </ul>
+              </div>
+            </div>
+          ))
         )}
-      </main>
-    </div>
+      </div>
+    </>
   );
 }
