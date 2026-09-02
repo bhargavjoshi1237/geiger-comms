@@ -1,30 +1,40 @@
 "use client";
 
-// The shared Channels screen (channels spec §5.1): header + connect, one card
-// list per configured channel with status/simulated badges and row actions,
-// the declarative config form for the selected channel, and — for Messenger
-// only — the widget preview and the Install section (messenger-widget §12).
-// Config keys are flat on the channel view model; edits persist through
-// updateChannel({ config }) on a short debounce.
+// The shared Channels list screen (channels spec §5.1), one per kind. Follows
+// the suite list pattern: header + connect, KPI bar, toolbar filters, a
+// DataTable of connections and pagination. Selecting a row opens the channel in
+// the URL (?channel=<id>) and swaps to the full-page editor — configuration
+// never happens inline on the list.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { MoreHorizontal, PlugZap, Trash2 } from "lucide-react";
+import { Copy, Loader2, Pencil, PlugZap, Trash2, Unplug } from "lucide-react";
 import {
+  ActionMenu,
   Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@geiger/ui";
-import { SecondaryScreenWrapper } from "@/components/internal/shared/screen_wrappers";
+import { MainScreenWrapper } from "@/components/internal/shared/screen_wrappers";
 import {
+  ListPagination,
+  usePagination,
+} from "@/components/internal/shared/pagination";
+import {
+  DataTable,
   EmptyState,
   ScreenHeader,
-  SectionCard,
+  SearchInput,
+  StatsBar,
   StatusPill,
+  Toolbar,
 } from "@/components/internal/shared/screen_kit";
+import FilterDropdown from "@/components/internal/screens/overview/filter_dropdown";
+import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
 import {
   countConversationsByChannel,
   createChannel,
@@ -33,43 +43,86 @@ import {
   updateChannel,
 } from "@/lib/supabase/channels";
 import { getUser } from "@/lib/supabase/user";
-import { CHANNEL_KIND_META, CHANNEL_STATUS_MAP } from "./constants";
-import { ChannelConfigForm } from "./channel_config_form";
+import {
+  CHANNEL_KIND_META,
+  CHANNEL_STATUS_FILTER_OPTIONS,
+  CHANNEL_STATUS_MAP,
+  formatDate,
+} from "./constants";
 import { ConnectDialog } from "./connect_dialog";
-import { InstallSection } from "./install_section";
-import { MessengerPreview } from "./messenger_preview";
-
-const SAVE_DEBOUNCE_MS = 600;
+import { ChannelDetailScreen } from "./channel_detail";
 
 export function ChannelScreen({ kind }) {
   const meta = CHANNEL_KIND_META[kind];
-  const isMessenger = kind === "messenger";
+  const { channelId, openChannel, closeChannel } = useWorkspaceUrl();
 
-  const [channels, setChannels] = useState(null);
+  const [channels, setChannels] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [counts, setCounts] = useState({});
-  const [selectedId, setSelectedId] = useState(null);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("all");
   const [connectOpen, setConnectOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => {
-    let active = true;
+    let alive = true;
     listChannelsByKind({ kind }).then((rows) => {
-      if (!active) return;
+      if (!alive) return;
       setChannels(rows ?? []);
-      setSelectedId((current) => current ?? rows?.[0]?.id ?? null);
+      setLoading(false);
     });
-    countConversationsByChannel({}).then((map) => active && setCounts(map || {}));
+    countConversationsByChannel({}).then((map) => alive && setCounts(map || {}));
     return () => {
-      active = false;
+      alive = false;
     };
   }, [kind]);
 
   const selected = useMemo(
-    () => channels?.find((c) => c.id === selectedId) ?? null,
-    [channels, selectedId],
+    () => (channelId ? channels.find((c) => c.id === channelId) || null : null),
+    [channelId, channels],
   );
 
-  async function handleConnect({ name }) {
+  const filtered = useMemo(
+    () =>
+      channels.filter((c) => {
+        if (status !== "all" && c.status !== status) return false;
+        if (
+          search &&
+          !`${c.name} ${meta.summary(c)}`.toLowerCase().includes(search.toLowerCase())
+        )
+          return false;
+        return true;
+      }),
+    [channels, search, status, meta],
+  );
+
+  const pager = usePagination(filtered, { resetKey: `${search}|${status}` });
+
+  const stats = useMemo(() => {
+    const connected = channels.filter((c) => c.status === "connected").length;
+    const errored = channels.filter((c) => c.status === "error").length;
+    const conversations = channels.reduce((n, c) => n + (counts[c.id] || 0), 0);
+    return [
+      {
+        label: "Connections",
+        value: String(channels.length),
+        footer: `${connected} connected`,
+      },
+      {
+        label: "Conversations",
+        value: conversations.toLocaleString("en-US"),
+        footer: `Across all ${meta.label.toLowerCase()} channels`,
+      },
+      { label: "Needs attention", value: String(errored), footer: "In an error state" },
+      {
+        label: "Configured",
+        value: String(channels.filter((c) => meta.summary(c)).length),
+        footer: "With settings filled in",
+      },
+    ];
+  }, [channels, counts, meta]);
+
+  async function handleConnect({ name, config }) {
     const optimisticId = crypto.randomUUID();
     const user = await getUser();
     const optimistic = {
@@ -79,210 +132,278 @@ export function ChannelScreen({ kind }) {
       status: "disconnected",
       simulated: true,
       createdAt: new Date().toISOString(),
+      ...(config || {}),
     };
-    setChannels((prev) => [...(prev ?? []), optimistic]);
-    setSelectedId(optimisticId);
+    setChannels((prev) => [...prev, optimistic]);
     const created = await createChannel({
       id: optimisticId,
       kind,
       name,
+      config: config || {},
       createdBy: user?.id ?? null,
     });
     if (!created) {
-      setChannels((prev) => (prev ?? []).filter((c) => c.id !== optimisticId));
+      setChannels((prev) => prev.filter((c) => c.id !== optimisticId));
       toast.error(`Couldn't create the ${meta.label.toLowerCase()} channel`);
       return;
     }
-    setChannels((prev) => (prev ?? []).map((c) => (c.id === created.id ? created : c)));
-    setSelectedId(created.id);
+    setChannels((prev) => prev.map((c) => (c.id === created.id ? created : c)));
     toast.success(`${meta.label} channel created`);
+    openChannel(created.id);
   }
 
-  const handleSaved = useCallback(
-    (saved) => {
-      setSaving(false);
-      if (!saved) {
-        toast.error("Couldn't save changes");
-        return;
-      }
-      // normalizeChannel spreads config/metadata flat; fold the saved keys in.
-      setChannels((prev) =>
-        (prev ?? []).map((c) =>
-          c.id === saved.id
-            ? { ...c, ...(saved.config || {}), ...(saved.metadata || {}), name: saved.name }
-            : c,
-        ),
-      );
-    },
-    [],
-  );
+  // The editor lifts every edit back up so the list and the open row agree.
+  const handleUpdate = (updated) =>
+    setChannels((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
 
   async function handleToggleStatus(channel) {
-    const nextStatus = channel.status === "connected" ? "disconnected" : "connected";
+    const next = channel.status === "connected" ? "disconnected" : "connected";
     setChannels((prev) =>
-      (prev ?? []).map((c) => (c.id === channel.id ? { ...c, status: nextStatus } : c)),
+      prev.map((c) => (c.id === channel.id ? { ...c, status: next } : c)),
     );
-    const saved = await updateChannel(channel.id, { status: nextStatus });
+    const saved = await updateChannel(channel.id, { status: next });
     if (!saved) {
-      setChannels((prev) => (prev ?? []).map((c) => (c.id === channel.id ? channel : c)));
+      setChannels((prev) => prev.map((c) => (c.id === channel.id ? channel : c)));
       toast.error("Couldn't update the connection");
       return;
     }
-    toast.success(nextStatus === "connected" ? "Connected" : "Disconnected");
+    toast.success(next === "connected" ? "Connected" : "Disconnected");
+  }
+
+  async function handleDuplicate(channel) {
+    const optimisticId = crypto.randomUUID();
+    const user = await getUser();
+    const copy = {
+      ...channel,
+      id: optimisticId,
+      name: `${channel.name} (copy)`,
+      status: "disconnected",
+      createdAt: new Date().toISOString(),
+    };
+    setChannels((prev) => [...prev, copy]);
+    const created = await createChannel({
+      id: optimisticId,
+      kind,
+      name: copy.name,
+      config: Object.fromEntries(
+        meta.fields.map((f) => [f.key, channel[f.key]]).filter(([, v]) => v !== undefined),
+      ),
+      createdBy: user?.id ?? null,
+    });
+    if (!created) {
+      setChannels((prev) => prev.filter((c) => c.id !== optimisticId));
+      toast.error("Couldn't duplicate the channel");
+      return;
+    }
+    setChannels((prev) => prev.map((c) => (c.id === created.id ? created : c)));
+    toast.success(`Duplicated "${channel.name}".`);
   }
 
   async function handleDelete(channel) {
+    setDeleteTarget(null);
     const previous = channels;
-    setChannels((prev) => (prev ?? []).filter((c) => c.id !== channel.id));
-    if (selectedId === channel.id) setSelectedId(null);
+    setChannels((prev) => prev.filter((c) => c.id !== channel.id));
+    if (channelId === channel.id) closeChannel();
     const ok = await softDeleteChannel(channel.id);
     if (!ok) {
       setChannels(previous);
       toast.error("Couldn't delete the channel");
       return;
     }
-    toast.success("Channel deleted");
+    toast.success(`Deleted "${channel.name}".`);
   }
 
-  const requiredField = meta.fields.find((f) => f.required);
+  const columns = [
+    {
+      key: "name",
+      header: meta.label,
+      render: (c) => (
+        <div className="flex flex-col gap-1">
+          <span className="font-medium text-foreground">{c.name}</span>
+          <span className="text-xs text-text-secondary">
+            {meta.summary(c) || "Not configured"}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      render: (c) => (
+        <div className="flex items-center gap-2">
+          <StatusPill status={c.status} map={CHANNEL_STATUS_MAP} />
+          {c.simulated === false ? null : (
+            <span className="rounded-full border border-border bg-surface-hover px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              Simulated
+            </span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "conversations",
+      header: "Conversations",
+      align: "right",
+      className: "text-right tabular-nums text-foreground",
+      render: (c) => (counts[c.id] || 0).toLocaleString("en-US"),
+    },
+    {
+      key: "created",
+      header: "Added",
+      render: (c) => (
+        <span className="text-sm text-text-secondary">
+          {formatDate(c.createdAt) || "—"}
+        </span>
+      ),
+    },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      className: "text-right",
+      render: (c) => (
+        <ActionMenu
+          label={`Actions for ${c.name}`}
+          items={[
+            { icon: Pencil, label: "Edit", onSelect: () => openChannel(c.id) },
+            {
+              icon: c.status === "connected" ? Unplug : PlugZap,
+              label: c.status === "connected" ? "Disconnect" : "Connect",
+              onSelect: () => handleToggleStatus(c),
+            },
+            { icon: Copy, label: "Duplicate", onSelect: () => handleDuplicate(c) },
+            { separator: true },
+            {
+              icon: Trash2,
+              label: "Delete",
+              variant: "destructive",
+              onSelect: () => setDeleteTarget(c),
+            },
+          ]}
+        />
+      ),
+    },
+  ];
+
+  // Confirmation lives outside the list/editor branch so the editor's danger
+  // zone gets the same dialog the row action does.
+  const deleteDialog = (
+    <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Delete channel</DialogTitle>
+          <DialogDescription>
+            Are you sure you want to delete{" "}
+            <span className="font-medium text-foreground">{deleteTarget?.name}</span>
+            ? Existing conversations keep their history, but nothing new will route in.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setDeleteTarget(null)}>
+            Cancel
+          </Button>
+          <Button
+            className="bg-red-500/90 text-white hover:bg-red-500"
+            onClick={() => handleDelete(deleteTarget)}
+          >
+            <Trash2 className="h-4 w-4" /> Delete
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  if (selected) {
+    return (
+      <>
+        <ChannelDetailScreen
+          channel={selected}
+          meta={meta}
+          conversationCount={counts[selected.id] || 0}
+          onBack={closeChannel}
+          onUpdate={handleUpdate}
+          onDelete={setDeleteTarget}
+        />
+        {deleteDialog}
+      </>
+    );
+  }
+
+  const connectButton = (
+    <Button
+      className="bg-primary text-primary-foreground hover:bg-primary/90"
+      onClick={() => setConnectOpen(true)}
+    >
+      <PlugZap className="h-4 w-4" /> Connect {meta.label}
+    </Button>
+  );
 
   return (
-    <SecondaryScreenWrapper>
-      <ScreenHeader
-        title={meta.label}
-        description={meta.blurb}
-        actions={
-          <Button type="button" size="sm" className="gap-1.5" onClick={() => setConnectOpen(true)}>
-            <PlugZap className="size-3.5" /> Connect {meta.label}
-          </Button>
-        }
-      />
+    <MainScreenWrapper>
+      <ScreenHeader title={meta.label} description={meta.blurb} actions={connectButton} />
 
-      <div className="flex flex-col gap-4">
-        {channels === null ? (
-          <SectionCard title="Connections">
-            <p className="py-6 text-center text-sm text-muted-foreground">Loading…</p>
-          </SectionCard>
-        ) : channels.length === 0 ? (
-          <SectionCard title="Connections">
-            <EmptyState
-              title={`No ${meta.label.toLowerCase()} channels yet`}
-              description="Connect one to start configuring it."
-              action={
-                <Button type="button" size="sm" onClick={() => setConnectOpen(true)}>
-                  Connect {meta.label}
-                </Button>
-              }
-              className="py-10"
-            />
-          </SectionCard>
-        ) : (
-          <>
-            <SectionCard title="Connections">
-              <div className="divide-y divide-border">
-                {channels.map((channel) => (
-                  <div
-                    key={channel.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setSelectedId(channel.id)}
-                    onKeyDown={(e) => e.key === "Enter" && setSelectedId(channel.id)}
-                    className="flex cursor-pointer items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className={`truncate text-sm font-medium ${selectedId === channel.id ? "" : "opacity-90"}`}>
-                          {channel.name}
-                        </p>
-                        <StatusPill status={channel.status} map={CHANNEL_STATUS_MAP} />
-                        {channel.simulated ? (
-                          <span className="rounded-full border border-border bg-surface-hover px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                            Simulated
-                          </span>
-                        ) : null}
-                      </div>
-                      <p className="mt-0.5 truncate text-xs text-text-secondary">
-                        {meta.summary(channel) || "Not configured"}
-                        {counts[channel.id] ? ` · ${counts[channel.id]} conversations` : ""}
-                      </p>
-                    </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={`${channel.name} actions`}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <MoreHorizontal />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                        <DropdownMenuItem onClick={() => void handleToggleStatus(channel)}>
-                          {channel.status === "connected" ? "Disconnect" : "Connect"}
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem variant="destructive" onClick={() => void handleDelete(channel)}>
-                          <Trash2 /> Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                ))}
+      <StatsBar stats={stats} />
+
+      <Toolbar>
+        <div className="flex items-center gap-2">
+          <FilterDropdown
+            value={status}
+            onValueChange={setStatus}
+            options={CHANNEL_STATUS_FILTER_OPTIONS}
+            height="h-9"
+          />
+        </div>
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder={`Search ${meta.label.toLowerCase()} channels…`}
+        />
+      </Toolbar>
+
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-subtle px-6 py-16 text-sm text-text-secondary">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading {meta.label} channels…
+        </div>
+      ) : (
+        <div className="space-y-5">
+          <DataTable
+            columns={columns}
+            data={pager.pageItems}
+            getRowKey={(c) => c.id}
+            onRowClick={(c) => openChannel(c.id)}
+            empty={
+              <div className="rounded-xl border border-border bg-surface-subtle">
+                <EmptyState
+                  icon={meta.icon}
+                  title={
+                    channels.length
+                      ? "No channels match your filters"
+                      : `No ${meta.label.toLowerCase()} channels yet`
+                  }
+                  description={
+                    channels.length
+                      ? "Try clearing the search or status filter."
+                      : "Connect one to start configuring it."
+                  }
+                  action={connectButton}
+                />
               </div>
-            </SectionCard>
-
-            {selected?.createdAt ? (
-              <ConfigPanel
-                key={selected.id}
-                channel={selected}
-                meta={meta}
-                isMessenger={isMessenger}
-                saving={saving}
-                onSavingChange={setSaving}
-                onSaved={handleSaved}
-              />
-            ) : null}
-
-            {isMessenger && selected?.createdAt ? <InstallSection channel={selected} /> : null}
-          </>
-        )}
-      </div>
+            }
+          />
+          <ListPagination {...pager} itemLabel="channels" />
+        </div>
+      )}
 
       <ConnectDialog
         open={connectOpen}
         onOpenChange={setConnectOpen}
         meta={meta}
-        requiredField={requiredField}
+        requiredField={meta.fields.find((f) => f.required)}
         onConnect={handleConnect}
       />
-    </SecondaryScreenWrapper>
-  );
-}
 
-// Owns the editable draft for one selected channel; keyed by channel id so a
-// different selection re-initialises without an effect.
-function ConfigPanel({ channel, meta, isMessenger, saving, onSavingChange, onSaved }) {
-  const [draft, setDraft] = useState(() => ({ ...channel }));
-  const timer = useRef(null);
-
-  useEffect(() => () => clearTimeout(timer.current), []);
-
-  function onChange(nextConfig) {
-    setDraft((prev) => ({ ...prev, ...nextConfig }));
-    clearTimeout(timer.current);
-    timer.current = setTimeout(async () => {
-      onSavingChange(true);
-      const saved = await updateChannel(channel.id, { config: nextConfig });
-      onSaved(saved);
-    }, SAVE_DEBOUNCE_MS);
-  }
-
-  return (
-    <SectionCard title="Configuration" description={saving ? "Saving…" : "Changes save automatically."}>
-      <ChannelConfigForm meta={meta} config={draft} onChange={onChange} />
-      {isMessenger ? <MessengerPreview config={draft} /> : null}
-    </SectionCard>
+      {deleteDialog}
+    </MainScreenWrapper>
   );
 }

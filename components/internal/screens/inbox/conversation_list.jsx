@@ -138,6 +138,7 @@ export function ConversationList({
       <div className="shrink-0 space-y-2 border-b border-border p-3">
         <div className="relative" data-inbox-search="true">
           <SearchInput
+            expanded
             value={filter.search || ""}
             onChange={(search) => set({ search })}
             placeholder="Search conversations…"

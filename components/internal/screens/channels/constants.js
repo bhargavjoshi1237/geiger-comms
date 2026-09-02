@@ -115,6 +115,34 @@ export const CHANNEL_KIND_META = {
 // Sidebar order of the six kinds.
 export const CHANNEL_KINDS = ["email", "messenger", "whatsapp", "sms", "social", "slack"];
 
+// Toolbar filter for the channels list; "all" sentinel first.
+export const CHANNEL_STATUS_FILTER_OPTIONS = [
+  { value: "all", label: "All statuses" },
+  { value: "connected", label: "Connected" },
+  { value: "disconnected", label: "Disconnected" },
+  { value: "error", label: "Error" },
+];
+
+// The flat view model spreads config keys; pull just this kind's back out.
+export function configOf(meta, channel) {
+  const config = {};
+  for (const field of meta?.fields || []) {
+    if (channel && field.key in channel) config[field.key] = channel[field.key];
+  }
+  return config;
+}
+
+export function formatDate(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 // The §1.1 honesty requirement: nothing connects to a real provider yet.
 export const CONNECT_DISCLOSURE =
   "This stores settings only — it does not connect to the provider and no messages flow through it yet.";
