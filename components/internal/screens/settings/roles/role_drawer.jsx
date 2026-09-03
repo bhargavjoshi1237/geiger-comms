@@ -5,22 +5,20 @@
 // old nested accordion-inside-a-card-inside-a-card was the boxiness.
 
 import { useMemo } from "react";
-import { Copy, Lock, Pencil, Search, Trash2, Users } from "lucide-react";
+import { Copy, Pencil, Trash2, Users, SlidersHorizontal } from "lucide-react";
 import {
   Badge,
   Button,
-  Input,
   Sheet,
   SheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
-  Switch,
 } from "@geiger/ui";
-import { cn } from "@/lib/utils";
+import { SearchInput } from "@/components/internal/shared/screen_kit";
 import { CoverageBar } from "./coverage_bar";
-import { Notice } from "./notice";
-import { filterGroups, grantsKey, isOwnerRole } from "./utils";
+import { OwnerNotice, PermissionGroupList } from "./role_sections";
+import { filterGroups, isOwnerRole } from "./utils";
 
 export function RoleDrawer({
   role,
@@ -35,6 +33,7 @@ export function RoleDrawer({
   onDuplicate,
   onDelete,
   onViewMembers,
+  onOpenEditor,
 }) {
   // Owner's list is read-only and unsearchable, so a query carried over from the
   // matrix must not silently hide half of it.
@@ -74,6 +73,18 @@ export function RoleDrawer({
               <span className="text-xs text-text-tertiary">Nobody holds this role</span>
             )}
             <span className="flex-1" />
+            {onOpenEditor ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  onOpenChange(false);
+                  onOpenEditor(role);
+                }}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" /> Open editor
+              </Button>
+            ) : null}
             {canManage ? (
               <Button variant="outline" size="sm" onClick={() => onDuplicate(role)}>
                 <Copy className="h-3.5 w-3.5" /> Duplicate
@@ -103,96 +114,27 @@ export function RoleDrawer({
 
         {owner ? (
           <div className="shrink-0 border-b border-border p-4">
-            <Notice icon={Lock}>
-              Owner holds every permission — including ones added to the product
-              later. It is deliberately not editable, so a workspace always keeps
-              at least one role that can administer it.
-            </Notice>
+            <OwnerNotice />
           </div>
         ) : (
-          <div className="relative shrink-0 border-b border-border p-4">
-            <Search className="pointer-events-none absolute left-7 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-tertiary" />
-            <Input
+          <div className="shrink-0 border-b border-border p-4">
+            <SearchInput
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={setQuery}
               placeholder="Filter permissions…"
-              className="h-9 bg-surface-card pl-9 text-sm"
             />
           </div>
         )}
 
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {groups.length === 0 ? (
-            <p className="px-5 py-12 text-center text-sm text-text-tertiary">
-              No permission matches “{query}”.
-            </p>
-          ) : (
-            groups.map(({ group, permissions }) => {
-              const keys = permissions.map((p) => p.key);
-              const on = keys.filter((k) => grantsKey(role, k)).length;
-              const allOn = on === keys.length;
-              return (
-                <section key={group}>
-                  <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-surface-card px-5 py-2">
-                    <span className="flex-1 truncate text-[11px] font-medium uppercase tracking-wider text-text-tertiary">
-                      {group}
-                    </span>
-                    <span
-                      className={cn(
-                        "rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums",
-                        on ? "bg-primary/15 text-primary" : "text-text-tertiary",
-                      )}
-                    >
-                      {on}/{keys.length}
-                    </span>
-                    {!locked ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-2 text-[11px] text-text-secondary"
-                        onClick={() => onToggleGroup(role, keys, !allOn)}
-                      >
-                        {allOn ? "Clear" : "Select all"}
-                      </Button>
-                    ) : null}
-                  </div>
-
-                  <div className="divide-y divide-border px-5">
-                    {permissions.map((perm) => (
-                      <label
-                        key={perm.key}
-                        className={cn(
-                          "flex items-center justify-between gap-4 py-3",
-                          !locked && "cursor-pointer",
-                        )}
-                      >
-                        <span className="min-w-0">
-                          <span className="flex items-center gap-1.5">
-                            <span className="truncate text-sm text-foreground">
-                              {perm.label}
-                            </span>
-                            {perm.scopeBy ? (
-                              <span className="shrink-0 rounded border border-border bg-surface-card px-1 py-px text-[10px] text-text-tertiary">
-                                per {perm.scopeBy}
-                              </span>
-                            ) : null}
-                          </span>
-                          <span className="block truncate font-mono text-[10px] text-text-tertiary">
-                            {perm.key}
-                          </span>
-                        </span>
-                        <Switch
-                          checked={grantsKey(role, perm.key)}
-                          disabled={locked}
-                          onCheckedChange={() => onToggle(role, perm.key)}
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </section>
-              );
-            })
-          )}
+          <PermissionGroupList
+            role={role}
+            groups={groups}
+            locked={locked}
+            query={query}
+            onToggle={onToggle}
+            onToggleGroup={onToggleGroup}
+          />
         </div>
       </SheetContent>
     </Sheet>

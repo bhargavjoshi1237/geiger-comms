@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlarmClock, AlertTriangle, Clock, Inbox, UserPlus } from "lucide-react";
 import { MainScreenWrapper } from "@/components/internal/shared/screen_wrappers";
-import { RollingNumber, StatsBar } from "@/components/internal/shared/screen_kit";
+import { RollingNumber, ScreenHeader, StatsBar } from "@/components/internal/shared/screen_kit";
 import { cn } from "@/lib/utils";
 import { useOptionalProject } from "@/context/project-context";
 import { listConversations } from "@/lib/supabase/comms";
@@ -160,47 +160,38 @@ export function CommsOverviewScreen({ demo = false }) {
 
   return (
     <MainScreenWrapper>
-      {/* Header: title + workspace summary stats */}
-      <div className="mt-2">
-        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-          <div>
-            <div className="flex w-full items-center justify-center gap-3 text-center md:w-auto md:justify-start md:text-left">
-              <h1 className="text-2xl font-bold text-white tracking-tight">Comms Overview</h1>
-            </div>
-            <p className="mt-1 text-center text-sm text-muted-foreground md:text-left">
-              Track conversation volume, response load, and resolutions across every channel.
-            </p>
-          </div>
-          <div className="w-full md:w-auto">
-            <div className="flex w-full md:w-auto md:gap-0">
-              {workspaceSummary.map((stat, i) => {
-                const last = i === workspaceSummary.length - 1;
-                return (
-                  <div
-                    key={stat.label}
-                    className={cn(
-                      "flex flex-1 flex-col items-center md:flex-none",
-                      i === 0 && "md:pr-8",
-                      i > 0 && "border-l border-border",
-                      i > 0 && !last && "md:px-8",
-                      last && i > 0 && "md:pl-8",
-                    )}
-                  >
-                    <span className="text-text-secondary text-[11px] uppercase tracking-wider font-medium">
-                      {stat.label}
-                    </span>
+      <ScreenHeader
+        title="Comms Overview"
+        description="Track conversation volume, response load, and resolutions across every channel."
+        actions={
+          <div className="flex w-full md:w-auto md:gap-0">
+            {workspaceSummary.map((stat, i) => {
+              const last = i === workspaceSummary.length - 1;
+              return (
+                <div
+                  key={stat.label}
+                  className={cn(
+                    "flex flex-1 flex-col items-center md:flex-none",
+                    i === 0 && "md:pr-8",
+                    i > 0 && "border-l border-border",
+                    i > 0 && !last && "md:px-8",
+                    last && i > 0 && "md:pl-8",
+                  )}
+                >
+                  <span className="text-text-secondary text-[11px] uppercase tracking-wider font-medium">
+                    {stat.label}
+                  </span>
 
-                    <RollingNumber
-                      value={stat.value}
-                      className="mt-0.5 text-2xl font-bold text-white"
-                    />
-                  </div>
-                );
-              })}
-            </div>
+                  <RollingNumber
+                    value={stat.value}
+                    className="mt-0.5 text-2xl font-bold text-white"
+                  />
+                </div>
+              );
+            })}
           </div>
-        </div>
-      </div>
+        }
+      />
 
       {/* Summary stats bar */}
       <StatsBar stats={statsData} />

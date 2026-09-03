@@ -2,15 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ShieldCheck, UserPlus } from "lucide-react";
+import { Loader2, ShieldCheck, UserPlus } from "lucide-react";
 
 import { MainScreenWrapper } from "@/components/internal/shared/screen_wrappers";
 import {
   ScreenHeader,
   StatsBar,
-  SectionCard,
 } from "@/components/internal/shared/screen_kit";
-import { Button } from "@geiger/ui";
+import { Button, Tabs, TabsList, TabsTrigger } from "@geiger/ui";
 import {
   Dialog,
   DialogContent,
@@ -19,13 +18,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@geiger/ui";
-import { cn } from "@/lib/utils";
+import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
+import { Notice } from "./roles/notice";
 import { useTeam } from "./team/use_team";
 import MembersTab from "./team/members_tab";
 import InvitationsTab from "./team/invitations_tab";
 import GroupsTab from "./team/groups_tab";
 import ActivityTab from "./team/activity_tab";
 import MemberDrawer from "./team/member_drawer";
+import MemberDetailScreen from "./team/member_detail";
 import InviteDialog from "./team/invite_dialog";
 import GroupDialog from "./team/group_dialog";
 
@@ -49,7 +50,6 @@ export function TeamMembersScreen() {
     activity,
     roleById,
     roleIdOf,
-    grantByUser,
     groupById,
     memberCountByGroup,
     activeMembers,
@@ -61,11 +61,18 @@ export function TeamMembersScreen() {
     setMemberGroups,
     toggleSuspend,
     removeMember,
+    renameMember,
     parseInviteList,
     inviteMembers,
+    resendInvite,
     revokeInvite,
     addGroup,
+    editGroup,
+    deleteGroup,
   } = useTeam();
+
+  // The full editor lives in the URL (?member=<id>) so a refresh stays on it.
+  const { memberId, openMember, closeMember } = useWorkspaceUrl();
 
   const [tab, setTab] = useState("members");
   const [search, setSearch] = useState("");
@@ -104,9 +111,14 @@ export function TeamMembersScreen() {
     });
   }, [activeMembers, search, statusFilter, roleFilter, groupFilter, roleIdOf]);
 
-  const openMember = useMemo(
+  const drawerMember = useMemo(
     () => members.find((m) => m.id === openMemberId) || null,
     [members, openMemberId],
+  );
+
+  const editingMember = useMemo(
+    () => (memberId ? members.find((m) => m.id === memberId) || null : null),
+    [members, memberId],
   );
 
   const confirmRemove = async () => {
@@ -114,7 +126,9 @@ export function TeamMembersScreen() {
     setRemoveTarget(null);
     if (!member) return;
     const removed = await removeMember(member);
-    if (removed && openMemberId === member.id) setOpenMemberId(null);
+    if (!removed) return;
+    if (openMemberId === member.id) setOpenMemberId(null);
+    if (memberId === member.id) closeMember();
   };
 
   // Close the dialog only once the input is known good, so a bad list keeps the
@@ -157,6 +171,63 @@ export function TeamMembersScreen() {
     ...groups.map((g) => ({ value: g.id, label: g.name })),
   ];
 
+  // Jump from a group row to the members it holds.
+  const viewGroupMembers = (group) => {
+    setGroupFilter(group.id);
+    setTab("members");
+  };
+
+  // Shared by the list and the editor, so the editor's danger zone gets the same
+  // confirmation the row action does.
+  const removeDialog = (
+    <Dialog open={!!removeTarget} onOpenChange={(o) => !o && setRemoveTarget(null)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Remove member</DialogTitle>
+          <DialogDescription>
+            {removeTarget
+              ? `Remove ${removeTarget.name || removeTarget.email} from this workspace? They lose access immediately.`
+              : ""}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setRemoveTarget(null)}>
+            Cancel
+          </Button>
+          <Button
+            className="bg-red-500/90 text-white hover:bg-red-500"
+            onClick={confirmRemove}
+          >
+            Remove member
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  if (editingMember) {
+    return (
+      <>
+        <MemberDetailScreen
+          member={editingMember}
+          role={roleById[roleIdOf(editingMember)] || null}
+          roles={roles}
+          groups={groups}
+          activity={activity}
+          canAssign={canAssign}
+          isLastOwner={isLastOwner(editingMember)}
+          onBack={closeMember}
+          onRename={renameMember}
+          onChangeRole={changeRole}
+          onSetGroups={setMemberGroups}
+          onToggleSuspend={toggleSuspend}
+          onRemove={setRemoveTarget}
+        />
+        {removeDialog}
+      </>
+    );
+  }
+
   return (
     <MainScreenWrapper>
       <ScreenHeader
@@ -168,62 +239,46 @@ export function TeamMembersScreen() {
       <StatsBar stats={stats} />
 
       {!canAssign ? (
-        <div className="flex items-start gap-2.5 rounded-lg border border-border bg-surface-card px-3.5 py-2.5 text-xs leading-relaxed text-text-secondary">
-          <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-tertiary" />
-          <p>
-            You can see who is on the team, but changing roles or access needs the
-            <span className="text-foreground"> Assign roles </span>
-            permission.
-          </p>
-        </div>
+        <Notice icon={ShieldCheck}>
+          You can see who is on the team, but changing roles or access needs the
+          <span className="text-foreground"> Assign roles </span>
+          permission.
+        </Notice>
       ) : null}
 
-      {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-border">
-        {TABS.map((t) => {
-          const count =
-            t.key === "invitations"
-              ? invites.length
-              : t.key === "groups"
-                ? groups.length
-                : null;
-          return (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => setTab(t.key)}
-              className={cn(
-                "relative px-3 py-2 text-sm font-medium transition-colors",
-                tab === t.key
-                  ? "text-foreground"
-                  : "text-text-secondary hover:text-foreground",
-              )}
-            >
-              {t.label}
-              {count ? (
-                <span className="ml-1.5 text-xs text-text-tertiary">{count}</span>
-              ) : null}
-              {tab === t.key ? (
-                <span className="absolute inset-x-0 -bottom-px h-0.5 bg-primary" />
-              ) : null}
-            </button>
-          );
-        })}
-      </div>
+      {/* Tabs — same line variant as Roles & Permissions. */}
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList variant="line" className="border-b border-border">
+          {TABS.map((t) => {
+            const count =
+              t.key === "invitations"
+                ? invites.length
+                : t.key === "groups"
+                  ? groups.length
+                  : null;
+            return (
+              <TabsTrigger key={t.key} value={t.key}>
+                {t.label}
+                {count ? (
+                  <span className="ml-1.5 text-xs text-text-tertiary">{count}</span>
+                ) : null}
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
+      </Tabs>
 
       {loading ? (
-        <SectionCard>
-          <div className="py-16 text-center text-sm text-text-secondary">
-            Loading team…
-          </div>
-        </SectionCard>
+        <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-subtle px-6 py-16 text-sm text-text-secondary">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading team…
+        </div>
       ) : tab === "members" ? (
         <MembersTab
           members={filteredMembers}
           total={activeMembers.length}
           roleById={roleById}
           roleIdOf={roleIdOf}
-          grantByUser={grantByUser}
           canAssign={canAssign}
           groupById={groupById}
           roles={roles}
@@ -238,6 +293,7 @@ export function TeamMembersScreen() {
           roleFilterOptions={roleFilterOptions}
           groupFilterOptions={groupFilterOptions}
           onOpen={(m) => setOpenMemberId(m.id)}
+          onEdit={(m) => openMember(m.id)}
           onChangeRole={changeRole}
           onToggleSuspend={toggleSuspend}
           onRemove={setRemoveTarget}
@@ -246,7 +302,9 @@ export function TeamMembersScreen() {
       ) : tab === "invitations" ? (
         <InvitationsTab
           invites={invites}
+          roles={roles}
           roleById={roleById}
+          onResend={resendInvite}
           onRevoke={revokeInvite}
           onInvite={openInvite}
         />
@@ -255,6 +313,9 @@ export function TeamMembersScreen() {
           groups={groups}
           counts={memberCountByGroup}
           onCreate={() => setGroupOpen(true)}
+          onEdit={editGroup}
+          onDelete={deleteGroup}
+          onViewMembers={viewGroupMembers}
         />
       ) : (
         <ActivityTab activity={activity} />
@@ -277,12 +338,12 @@ export function TeamMembersScreen() {
       />
 
       <MemberDrawer
-        member={openMember}
-        role={openMember ? roleById[roleIdOf(openMember)] : null}
+        member={drawerMember}
+        role={drawerMember ? roleById[roleIdOf(drawerMember)] : null}
         roles={roles}
         groups={groups}
         canAssign={canAssign}
-        isLastOwner={openMember ? isLastOwner(openMember) : false}
+        isLastOwner={drawerMember ? isLastOwner(drawerMember) : false}
         onOpenChange={(o) => !o && setOpenMemberId(null)}
         onChangeRole={changeRole}
         onSetGroups={setMemberGroups}
@@ -290,29 +351,7 @@ export function TeamMembersScreen() {
         onRemove={setRemoveTarget}
       />
 
-      <Dialog open={!!removeTarget} onOpenChange={(o) => !o && setRemoveTarget(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove member</DialogTitle>
-            <DialogDescription>
-              {removeTarget
-                ? `Remove ${removeTarget.name || removeTarget.email} from this workspace? They lose access immediately.`
-                : ""}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setRemoveTarget(null)}>
-              Cancel
-            </Button>
-            <Button
-              className="bg-red-500/90 text-white hover:bg-red-500"
-              onClick={confirmRemove}
-            >
-              Remove member
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {removeDialog}
     </MainScreenWrapper>
   );
 }

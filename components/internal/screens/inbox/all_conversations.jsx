@@ -4,6 +4,7 @@
 // URL carries ?view=<id> (a Views row click lands here with that param).
 
 import { useEffect, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
 import { getView } from "@/lib/supabase/views";
 import { InboxShell } from "./inbox_shell";
@@ -38,8 +39,9 @@ function ViewedShell({ viewId }) {
 
   if (!filter) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-text-secondary">Loading view…</p>
+      <div className="flex h-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-subtle px-6 py-16 text-sm text-text-secondary">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Loading view…
       </div>
     );
   }

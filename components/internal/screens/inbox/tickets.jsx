@@ -1,26 +1,43 @@
 "use client";
 
-// Tickets — DataTable over comms.tickets with type / state / assignee filters
-// and search (spec §6). Row click opens the linked conversation when there is
-// one; a tracker ticket opens a detail showing all linked conversations.
+// Tickets — one queue over comms.tickets with type / state filters and search
+// (spec §6). Follows the suite list pattern: header + create, KPI bar, toolbar
+// filters, a DataTable and pagination. Selecting a row opens the ticket in the
+// URL (?ticket=<id>) and swaps to the full-page editor.
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Button, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@geiger/ui";
-import { MessagesSquare, Ticket as TicketIcon } from "lucide-react";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
+  CheckCircle2,
+  Loader2,
+  MessagesSquare,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Ticket as TicketIcon,
+  Trash2,
+} from "lucide-react";
+import {
+  ActionMenu,
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@geiger/ui";
 import { MainScreenWrapper } from "@/components/internal/shared/screen_wrappers";
+import {
+  ListPagination,
+  usePagination,
+} from "@/components/internal/shared/pagination";
 import {
   DataTable,
   EmptyState,
   ScreenHeader,
   SearchInput,
+  StatsBar,
   StatusPill,
   Toolbar,
 } from "@/components/internal/shared/screen_kit";
@@ -28,30 +45,35 @@ import FilterDropdown from "../overview/filter_dropdown";
 import { useOptionalProject } from "@/context/project-context";
 import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
 import {
-  listLinkedConversationIds,
+  createTicket,
   listTickets,
   softDeleteTicket,
   updateTicket,
-  TICKET_STATES,
 } from "@/lib/supabase/tickets";
+import { getUser } from "@/lib/supabase/user";
 import {
+  TICKET_STATE_FILTER_OPTIONS,
   TICKET_STATE_MAP,
-  TICKET_STATE_OPTIONS,
+  TICKET_TYPE_FILTER_OPTIONS,
   TICKET_TYPE_MAP,
-  TICKET_TYPE_OPTIONS,
+  ageInDays,
+  formatDate,
 } from "./constants";
+import { TicketDialog } from "./ticket_dialog";
+import { TicketDetailScreen } from "./ticket_detail";
 
 export function TicketsScreen() {
   const { projectId } = useOptionalProject() ?? {};
-  const { openConversationInTab } = useWorkspaceUrl();
+  const { ticketId, openTicket, closeTicket, openConversationInTab } =
+    useWorkspaceUrl();
 
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [stateFilter, setStateFilter] = useState("all");
-  const [detail, setDetail] = useState(null); // ticket whose links we show
-  const [linkedIds, setLinkedIds] = useState([]);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -64,6 +86,11 @@ export function TicketsScreen() {
       alive = false;
     };
   }, [projectId]);
+
+  const selected = useMemo(
+    () => (ticketId ? tickets.find((t) => t.id === ticketId) || null : null),
+    [ticketId, tickets],
+  );
 
   const filtered = useMemo(() => {
     let rows = tickets;
@@ -80,9 +107,92 @@ export function TicketsScreen() {
     return rows;
   }, [tickets, typeFilter, stateFilter, search]);
 
-  async function advanceState(ticket, state) {
+  const pager = usePagination(filtered, {
+    resetKey: `${search}|${typeFilter}|${stateFilter}`,
+  });
+
+  const stats = useMemo(() => {
+    const open = tickets.filter((t) => t.state !== "resolved");
+    const inProgress = tickets.filter((t) => t.state === "in_progress").length;
+    const resolved = tickets.filter((t) => t.state === "resolved").length;
+    const ages = open.map((t) => ageInDays(t.createdAt)).filter((d) => d != null);
+    const avgAge = ages.length
+      ? Math.round(ages.reduce((sum, d) => sum + d, 0) / ages.length)
+      : 0;
+    return [
+      {
+        label: "Open",
+        value: String(open.length),
+        footer: `${tickets.length} tickets in total`,
+      },
+      {
+        label: "In progress",
+        value: String(inProgress),
+        footer: "Actively being worked on",
+      },
+      {
+        label: "Resolved",
+        value: String(resolved),
+        footer: tickets.length
+          ? `${Math.round((resolved / tickets.length) * 100)}% of the queue`
+          : "Nothing resolved yet",
+      },
+      {
+        label: "Avg age",
+        value: `${avgAge}d`,
+        footer: "Across open tickets",
+      },
+    ];
+  }, [tickets]);
+
+  // The dialog is create-only; editing happens in the full-page editor.
+  async function handleCreate({ conversation, type, title, description }) {
+    const optimisticId = crypto.randomUUID();
+    const user = await getUser();
+    const now = new Date().toISOString();
+    const optimistic = {
+      id: optimisticId,
+      conversationId: conversation?.id ?? null,
+      type,
+      state: "submitted",
+      title: title.trim(),
+      description: description?.trim() ?? "",
+      assigneeId: null,
+      projectId: projectId ?? null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    setTickets((prev) => [optimistic, ...prev]);
+    const created = await createTicket({
+      id: optimisticId,
+      conversationId: optimistic.conversationId,
+      type,
+      state: "submitted",
+      title: optimistic.title,
+      description: optimistic.description,
+      projectId: projectId ?? null,
+      createdBy: user?.id ?? null,
+    });
+    if (!created) {
+      setTickets((prev) => prev.filter((t) => t.id !== optimisticId));
+      toast.error("Couldn't create the ticket.");
+      return null;
+    }
+    setTickets((prev) => prev.map((t) => (t.id === created.id ? created : t)));
+    toast.success("Ticket created");
+    openTicket(created.id);
+    return created;
+  }
+
+  // The editor lifts every edit back up so the list and the open row agree.
+  const handleUpdate = (updated) =>
+    setTickets((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+
+  async function handleState(ticket, state) {
     const previous = tickets;
-    setTickets((prev) => prev.map((t) => (t.id === ticket.id ? { ...t, state } : t)));
+    setTickets((prev) =>
+      prev.map((t) => (t.id === ticket.id ? { ...t, state } : t)),
+    );
     const saved = await updateTicket(ticket.id, { state });
     if (!saved) {
       setTickets(previous);
@@ -92,35 +202,22 @@ export function TicketsScreen() {
     toast.success(`Moved to ${TICKET_STATE_MAP[state]?.label ?? state}`);
   }
 
-  async function remove(ticket) {
+  async function handleDelete(ticket) {
+    setDeleteTarget(null);
     const previous = tickets;
     setTickets((prev) => prev.filter((t) => t.id !== ticket.id));
+    if (ticketId === ticket.id) closeTicket();
     const ok = await softDeleteTicket(ticket.id);
     if (!ok) {
       setTickets(previous);
       toast.error("Couldn't delete the ticket.");
       return;
     }
-    toast.success("Ticket deleted");
+    toast.success(`Deleted "${ticket.title}".`);
   }
 
-  function openTicket(ticket) {
-    if (ticket.type === "tracker") {
-      void showTrackerDetail(ticket);
-      return;
-    }
-    if (!ticket.conversationId) {
-      toast.error("This ticket has no linked conversation.");
-      return;
-    }
-    // Land on the linked thread in All Conversations in one navigation.
-    openConversationInTab(ticket.conversationId, "All Conversations");
-  }
-
-  async function showTrackerDetail(ticket) {
-    setDetail(ticket);
-    setLinkedIds(await listLinkedConversationIds(ticket.id));
-  }
+  const openConversation = (id) =>
+    openConversationInTab(id, "All Conversations");
 
   const columns = [
     {
@@ -132,7 +229,9 @@ export function TicketsScreen() {
           <div className="min-w-0">
             <p className="truncate font-medium text-foreground">{row.title}</p>
             {row.description ? (
-              <p className="truncate text-xs text-text-secondary">{row.description}</p>
+              <p className="truncate text-xs text-text-secondary">
+                {row.description}
+              </p>
             ) : null}
           </div>
         </div>
@@ -151,61 +250,134 @@ export function TicketsScreen() {
     {
       key: "updated",
       header: "Updated",
-      render: (row) =>
-        row.updatedAt
-          ? new Date(row.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })
-          : "—",
+      render: (row) => (
+        <span className="text-sm text-text-secondary">
+          {formatDate(row.updatedAt) || "—"}
+        </span>
+      ),
     },
     {
       key: "actions",
       header: "",
       align: "right",
-      className: "w-12",
+      className: "text-right",
       render: (row) => (
-        <div onClick={(e) => e.stopPropagation()} className="flex justify-end">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label={`${row.title} actions`}>
-                ⋯
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="border-border bg-surface-subtle">
-              {(TICKET_STATES.filter((s) => s !== row.state)).map((state) => (
-                <DropdownMenuItem key={state} className="text-xs" onClick={() => void advanceState(row, state)}>
-                  Move to {TICKET_STATE_MAP[state]?.label ?? state}
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator className="bg-border" />
-              <DropdownMenuItem variant="destructive" className="text-xs" onClick={() => void remove(row)}>
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        <ActionMenu
+          label={`Actions for ${row.title}`}
+          items={[
+            { icon: Pencil, label: "Edit", onSelect: () => openTicket(row.id) },
+            row.conversationId && {
+              icon: MessagesSquare,
+              label: "Open conversation",
+              onSelect: () => openConversation(row.conversationId),
+            },
+            row.state === "resolved"
+              ? {
+                  icon: RotateCcw,
+                  label: "Reopen",
+                  onSelect: () => void handleState(row, "in_progress"),
+                }
+              : {
+                  icon: CheckCircle2,
+                  label: "Mark resolved",
+                  onSelect: () => void handleState(row, "resolved"),
+                },
+            { separator: true },
+            {
+              icon: Trash2,
+              label: "Delete",
+              variant: "destructive",
+              onSelect: () => setDeleteTarget(row),
+            },
+          ]}
+        />
       ),
     },
   ];
+
+  // Confirmation lives outside the list/editor branch so the editor's danger
+  // zone gets the same dialog the row action does.
+  const deleteDialog = (
+    <Dialog
+      open={!!deleteTarget}
+      onOpenChange={(open) => !open && setDeleteTarget(null)}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Delete ticket</DialogTitle>
+          <DialogDescription>
+            Are you sure you want to delete{" "}
+            <span className="font-medium text-foreground">
+              {deleteTarget?.title}
+            </span>
+            ? Linked conversations keep their history.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setDeleteTarget(null)}>
+            Cancel
+          </Button>
+          <Button
+            className="bg-red-500/90 text-white hover:bg-red-500"
+            onClick={() => void handleDelete(deleteTarget)}
+          >
+            <Trash2 className="h-4 w-4" /> Delete
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  if (selected) {
+    return (
+      <>
+        <TicketDetailScreen
+          ticket={selected}
+          projectId={projectId}
+          onBack={closeTicket}
+          onUpdate={handleUpdate}
+          onDelete={setDeleteTarget}
+          onOpenConversation={openConversation}
+        />
+        {deleteDialog}
+      </>
+    );
+  }
+
+  const createButton = (
+    <Button
+      className="bg-primary text-primary-foreground hover:bg-primary/90"
+      onClick={() => setCreateOpen(true)}
+    >
+      <Plus className="h-4 w-4" /> New ticket
+    </Button>
+  );
 
   return (
     <MainScreenWrapper>
       <ScreenHeader
         title="Tickets"
         description="Customer, back-office and tracker tickets — a type filter over one queue, not three screens."
+        actions={createButton}
       />
+
+      <StatsBar stats={stats} />
 
       <Toolbar>
         <div className="flex flex-wrap items-center gap-2">
           <FilterDropdown
             value={typeFilter}
             onValueChange={setTypeFilter}
-            options={[{ value: "all", label: "All types" }, ...TICKET_TYPE_OPTIONS]}
+            options={TICKET_TYPE_FILTER_OPTIONS}
             placeholder="All types"
+            height="h-9"
           />
           <FilterDropdown
             value={stateFilter}
             onValueChange={setStateFilter}
-            options={[{ value: "all", label: "All states" }, ...TICKET_STATE_OPTIONS]}
+            options={TICKET_STATE_FILTER_OPTIONS}
             placeholder="All states"
+            height="h-9"
           />
         </div>
         <SearchInput
@@ -217,68 +389,63 @@ export function TicketsScreen() {
       </Toolbar>
 
       {loading ? (
-        <div className="space-y-2 rounded-xl border border-border bg-surface-subtle p-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-10 rounded-md border border-border bg-surface-card" />
-          ))}
+        <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-subtle px-6 py-16 text-sm text-text-secondary">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading tickets…
         </div>
       ) : (
-        <DataTable
-          columns={columns}
-          data={filtered}
-          getRowKey={(row) => row.id}
-          onRowClick={openTicket}
-          empty={
-            <EmptyState
-              icon={MessagesSquare}
-              title={
-                filtered.length === 0 && tickets.length > 0
-                  ? "No tickets match these filters"
-                  : "No tickets yet"
-              }
-              description={
-                filtered.length === 0 && tickets.length > 0
-                  ? "Try clearing the type or state filter."
-                  : "Create one from any conversation's thread menu."
-              }
-              className="rounded-xl border border-border bg-surface-subtle"
-            />
-          }
-        />
+        <div className="space-y-5">
+          <DataTable
+            columns={columns}
+            data={pager.pageItems}
+            getRowKey={(row) => row.id}
+            onRowClick={(row) => openTicket(row.id)}
+            empty={
+              <div className="rounded-xl border border-border bg-surface-subtle">
+                <EmptyState
+                  icon={TicketIcon}
+                  title={
+                    tickets.length
+                      ? "No tickets match these filters"
+                      : "No tickets yet"
+                  }
+                  description={
+                    tickets.length
+                      ? "Try clearing the search, type or state filter."
+                      : "Create one here, or from any conversation's thread menu."
+                  }
+                  action={
+                    tickets.length ? (
+                      <Button
+                        variant="outline"
+                        className="border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
+                        onClick={() => {
+                          setSearch("");
+                          setTypeFilter("all");
+                          setStateFilter("all");
+                        }}
+                      >
+                        Clear filters
+                      </Button>
+                    ) : (
+                      createButton
+                    )
+                  }
+                />
+              </div>
+            }
+          />
+          <ListPagination {...pager} itemLabel="tickets" />
+        </div>
       )}
 
-      {/* Tracker detail: every conversation reporting this one bug. */}
-      <Dialog open={Boolean(detail)} onOpenChange={(open) => !open && setDetail(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{detail?.title}</DialogTitle>
-            <DialogDescription>
-              A tracker ticket spans many customer conversations — everyone
-              reporting this issue links back to here.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="divide-y divide-border rounded-lg border border-border bg-surface-subtle">
-            {linkedIds.length === 0 ? (
-              <p className="px-3 py-4 text-sm text-text-secondary">No linked conversations yet.</p>
-            ) : (
-              linkedIds.map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => {
-                    setDetail(null);
-                    openConversationInTab(id, "All Conversations");
-                  }}
-                  className="block w-full truncate px-3 py-2.5 text-left text-sm text-text-secondary transition-colors first:rounded-t-lg hover:bg-surface-hover hover:text-foreground last:rounded-b-lg"
-                >
-                  <span className="font-mono text-xs text-text-tertiary">{id.slice(0, 8)}</span>{" "}
-                  Open linked conversation
-                </button>
-              ))
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+      <TicketDialog
+        open={createOpen}
+        onCancel={() => setCreateOpen(false)}
+        onCreate={handleCreate}
+      />
+
+      {deleteDialog}
     </MainScreenWrapper>
   );
 }

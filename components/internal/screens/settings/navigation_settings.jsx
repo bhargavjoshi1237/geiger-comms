@@ -2,11 +2,11 @@
 
 import React, { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
 import { NavVisibilitySettings } from "@geiger/ui";
 
 import { MainScreenWrapper } from "@/components/internal/shared/screen_wrappers";
 import { ScreenHeader, StatsBar } from "@/components/internal/shared/screen_kit";
-import { LoadingArea } from "@/components/internal/workspace/workspace_states";
 import { useCuratableNav } from "@/lib/hooks/use-visible-nav";
 import { useNavVisibility } from "@/context/nav-visibility-context";
 
@@ -67,7 +67,10 @@ export function NavigationSettingsScreen() {
     return (
       <MainScreenWrapper>
         {header}
-        <LoadingArea />
+        <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-subtle px-6 py-16 text-sm text-text-secondary">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading navigation…
+        </div>
       </MainScreenWrapper>
     );
   }

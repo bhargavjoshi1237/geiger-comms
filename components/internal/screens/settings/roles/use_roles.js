@@ -15,7 +15,7 @@ import { useRbac } from "@/context/rbac-context";
 import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
 import { getUser } from "@/lib/supabase/user";
 import { createRole, updateRole, softDeleteRole, ensureSystemRoles, listGrants } from "@/lib/supabase/rbac";
-import { logActivity } from "@/lib/supabase/team";
+import { listMembers, logActivity } from "@/lib/supabase/team";
 import { PERMISSION_GROUPS } from "../constants";
 import { grantsKey, isOwnerRole } from "./utils";
 
@@ -27,6 +27,8 @@ export function useRoles() {
 
   const [roles, setRoles] = useState([]);
   const [grants, setGrants] = useState([]);
+  // The roster, only so the editor can name the people holding a role.
+  const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState(null);
   const [userName, setUserName] = useState("");
@@ -50,6 +52,7 @@ export function useRoles() {
       setLoading(false);
     })();
     listGrants(projectId).then((rows) => alive && setGrants(rows ?? []));
+    listMembers(projectId).then((rows) => alive && setMembers(rows ?? []));
     return () => {
       alive = false;
     };
@@ -218,6 +221,7 @@ export function useRoles() {
   return {
     canManage,
     roles,
+    members,
     loading,
     memberCountByRole,
     stats,

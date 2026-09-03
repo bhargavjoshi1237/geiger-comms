@@ -4,16 +4,13 @@
 
 import { useMemo, useState } from "react";
 import { ChevronRight, MessagesSquare } from "lucide-react";
+import { Button } from "@geiger/ui";
 import {
-  Button,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@geiger/ui";
-import { EmptyState, StatusPill } from "@/components/internal/shared/screen_kit";
+  DataTable,
+  EmptyState,
+  StatusPill,
+  Toolbar,
+} from "@/components/internal/shared/screen_kit";
 import FilterDropdown from "./filter_dropdown";
 import { CONVERSATION_STATUS_MAP, PRIORITY_META, PRIORITY_WEIGHT, formatRelativeTime } from "./constants";
 import { DEMO_TOP_CONVERSATIONS } from "./demo_data";
@@ -47,9 +44,68 @@ export function TopConversationsTable({ demo, pending, conversations = [], asOf 
       .slice(0, 5);
   }, [demo, scoped, sortBy]);
 
+  const columns = [
+    {
+      key: "conversation",
+      header: "Conversation",
+      render: (conversation) => (
+        <div className="flex flex-col gap-1">
+          <span className="font-medium text-foreground">{conversation.subject}</span>
+          <p className="text-xs text-text-secondary">
+            {conversation.channel || "Chat"} ·{" "}
+            {conversation.contactName || "Unknown contact"}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      render: (conversation) => (
+        <StatusPill status={conversation.status} map={CONVERSATION_STATUS_MAP} />
+      ),
+    },
+    {
+      key: "activity",
+      header: "Last Activity",
+      className: "whitespace-nowrap tabular-nums text-text-secondary",
+      render: (conversation) => formatRelativeTime(conversation.lastMessageAt, asOf),
+    },
+    {
+      key: "priority",
+      header: "Priority",
+      render: (conversation) => {
+        const meta = PRIORITY_META[conversation.priority] || PRIORITY_META.Normal;
+        const PriorityIcon = meta.icon;
+        return (
+          <span className={cn("inline-flex items-center gap-1.5 font-medium", meta.className)}>
+            <PriorityIcon className="h-3.5 w-3.5" />
+            {meta.label}
+          </span>
+        );
+      },
+    },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      className: "text-right",
+      render: () => (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground hover:bg-surface-active hover:text-foreground"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+      ),
+    },
+  ];
+
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <Toolbar>
         <WidgetHeader
           title="Top Conversations"
           subtitle="The five threads that most need attention right now."
@@ -67,72 +123,27 @@ export function TopConversationsTable({ demo, pending, conversations = [], asOf 
             height="h-9"
           />
         </div>
-      </div>
+      </Toolbar>
 
-      <div className="overflow-hidden rounded-2xl border border-border bg-surface-card">
-        {/* Mid-fetch the table keeps its header and no rows, rather than
-            declaring the inbox has no conversations. */}
-        {sorted.length === 0 && !pending ? (
-          <EmptyState
-            icon={MessagesSquare}
-            title="No conversations yet"
-            description="Threads will appear here once customers reach out."
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow className="border-border">
-                <TableHead>Conversation</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Last Activity</TableHead>
-                <TableHead>Priority</TableHead>
-                <TableHead className="text-right"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {sorted.map((conversation) => {
-                const meta = PRIORITY_META[conversation.priority] || PRIORITY_META.Normal;
-                const PriorityIcon = meta.icon;
-                return (
-                  <TableRow key={conversation.id} className="border-border">
-                    <TableCell>
-                      <div className="flex flex-col gap-1">
-                        <span className="font-medium text-foreground">{conversation.subject}</span>
-                        <p className="text-xs text-text-secondary">
-                          {conversation.channel || "Chat"} ·{" "}
-                          {conversation.contactName || "Unknown contact"}
-                        </p>
-                      </div>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      <StatusPill status={conversation.status} map={CONVERSATION_STATUS_MAP} />
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap tabular-nums text-text-secondary">
-                      {formatRelativeTime(conversation.lastMessageAt, asOf)}
-                    </TableCell>
-                    <TableCell>
-                      <span className={cn("inline-flex items-center gap-1.5 font-medium", meta.className)}>
-                        <PriorityIcon className="h-3.5 w-3.5" />
-                        {meta.label}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="text-muted-foreground hover:bg-surface-active hover:text-foreground"
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        )}
-      </div>
+      {/* Mid-fetch the table keeps its header and no rows, rather than
+          declaring the inbox has no conversations. DataTable renders just
+          the header when data is empty and no empty state is given. */}
+      <DataTable
+        columns={columns}
+        data={pending ? [] : sorted}
+        getRowKey={(conversation) => conversation.id}
+        empty={
+          pending ? null : (
+            <div className="rounded-xl border border-border bg-surface-subtle">
+              <EmptyState
+                icon={MessagesSquare}
+                title="No conversations yet"
+                description="Threads will appear here once customers reach out."
+              />
+            </div>
+          )
+        }
+      />
     </div>
   );
 }

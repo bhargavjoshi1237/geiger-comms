@@ -153,6 +153,41 @@ export const TICKET_STATE_MAP = {
   resolved: { label: "Resolved", variant: "success", dotClass: "bg-emerald-400" },
 };
 
+// Toolbar filters — the "all" sentinel first, the shape FilterDropdown wants.
+export const TICKET_TYPE_FILTER_OPTIONS = [
+  { value: "all", label: "All types" },
+  ...TICKET_TYPE_OPTIONS,
+];
+
+export const TICKET_STATE_FILTER_OPTIONS = [
+  { value: "all", label: "All states" },
+  ...TICKET_STATE_OPTIONS,
+];
+
+// Everything that still needs work — the queue behind the "Open" KPI.
+export const TICKET_OPEN_STATES = ["submitted", "in_progress", "waiting"];
+
+export const isTicketOpen = (ticket) => ticket?.state !== "resolved";
+
+export function formatDate(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+// Whole days since `value`, rounded down. Null for a missing/invalid date.
+export function ageInDays(value, nowMs) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return Math.max(0, Math.floor(((nowMs ?? Date.now()) - d.getTime()) / 86400000));
+}
+
 // ---- tags --------------------------------------------------------------------------
 
 // Tag color name → tailwind badge utilities (semantic /10 bg + /20 border rule).

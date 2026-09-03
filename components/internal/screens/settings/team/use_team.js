@@ -19,6 +19,8 @@ import {
   softDeleteMember,
   listGroups,
   createGroup,
+  updateGroup,
+  softDeleteGroup,
   listActivity,
   logActivity,
   syncTeam,
@@ -341,6 +343,19 @@ export function useTeam() {
     toast.success(list.length === 1 ? "Invitation sent" : `${list.length} invitations sent`);
   };
 
+  // No mail is actually sent yet — stamping invitedAt is what "resent" means here.
+  const resendInvite = async (member) => {
+    const invitedAt = new Date().toISOString();
+    patchMember(member.id, { invitedAt });
+    const saved = await updateMember(member.id, { invitedAt });
+    if (!saved) {
+      patchMember(member.id, { invitedAt: member.invitedAt });
+      toast.error("Couldn't resend the invitation.");
+      return;
+    }
+    toast.success("Invitation resent");
+  };
+
   const revokeInvite = async (member) => {
     setMembers((prev) => prev.filter((m) => m.id !== member.id));
     const ok = await softDeleteMember(member.id);
@@ -373,6 +388,40 @@ export function useTeam() {
     }
   };
 
+  // Display name only — the email and account identity come from the org record.
+  const renameMember = async (member, name) => {
+    patchMember(member.id, { name });
+    const saved = await updateMember(member.id, { name });
+    if (saved) return true;
+    patchMember(member.id, { name: member.name });
+    toast.error("Couldn't save the name.");
+    return false;
+  };
+
+  const editGroup = async (group, patch) => {
+    setGroups((prev) => prev.map((g) => (g.id === group.id ? { ...g, ...patch } : g)));
+    const saved = await updateGroup(group.id, patch);
+    if (saved) {
+      setGroups((prev) => prev.map((g) => (g.id === group.id ? saved : g)));
+      toast.success("Group updated");
+      return;
+    }
+    setGroups((prev) => prev.map((g) => (g.id === group.id ? group : g)));
+    toast.error("Couldn't update the group.");
+  };
+
+  // Members keep the stale id in group_ids; the chips skip ids with no group.
+  const deleteGroup = async (group) => {
+    setGroups((prev) => prev.filter((g) => g.id !== group.id));
+    const ok = await softDeleteGroup(group.id);
+    if (!ok) {
+      setGroups((prev) => [...prev, group]);
+      toast.error("Couldn't delete the group.");
+      return;
+    }
+    toast.success("Group deleted");
+  };
+
   return {
     loading,
     canInvite,
@@ -400,10 +449,14 @@ export function useTeam() {
     setMemberGroups,
     toggleSuspend,
     removeMember,
+    renameMember,
     parseInviteList,
     inviteMembers,
+    resendInvite,
     revokeInvite,
     addGroup,
+    editGroup,
+    deleteGroup,
   };
 }
 

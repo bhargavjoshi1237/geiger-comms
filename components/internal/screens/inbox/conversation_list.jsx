@@ -16,7 +16,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@geiger/ui";
-import { SearchInput } from "@/components/internal/shared/screen_kit";
+import { SearchInput, EmptyState } from "@/components/internal/shared/screen_kit";
 import { cn } from "@/lib/utils";
 import ConversationRow from "./conversation_row";
 import {
@@ -226,7 +226,7 @@ export function ConversationList({
       {/* Rows */}
       <div onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto">
         {error ? (
-          <EmptyPane
+          <EmptyState
             icon={Inbox}
             title="Couldn't load conversations"
             description="Something went wrong reading the inbox."
@@ -238,7 +238,7 @@ export function ConversationList({
           />
         ) : conversations.length === 0 ? (
           isFiltered ? (
-            <EmptyPane
+            <EmptyState
               icon={MessagesSquare}
               title="No conversations match"
               description="Nothing here for these filters."
@@ -249,7 +249,7 @@ export function ConversationList({
               }
             />
           ) : (
-            <EmptyPane
+            <EmptyState
               icon={MessagesSquare}
               title="No conversations yet"
               description="Start one to see it appear here in real time."
@@ -284,21 +284,6 @@ export function ConversationList({
           </>
         )}
       </div>
-    </div>
-  );
-}
-
-function EmptyPane({ icon: Icon, title, description, action }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 py-16 text-center">
-      <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-border bg-surface-card text-text-secondary">
-        <Icon className="h-6 w-6" />
-      </div>
-      <div className="space-y-1">
-        <p className="text-sm font-semibold text-foreground">{title}</p>
-        {description ? <p className="mx-auto max-w-sm text-sm text-text-secondary">{description}</p> : null}
-      </div>
-      {action ? <div className="mt-1">{action}</div> : null}
     </div>
   );
 }

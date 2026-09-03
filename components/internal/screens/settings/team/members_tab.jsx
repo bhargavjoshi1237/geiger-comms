@@ -3,7 +3,7 @@
 import {
   Ban,
   CircleCheck,
-  MoreHorizontal,
+  Pencil,
   Trash2,
   UserPlus,
   Users,
@@ -16,14 +16,11 @@ import {
   StatusPill,
   Toolbar,
 } from "@/components/internal/shared/screen_kit";
-import { Button } from "@geiger/ui";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@geiger/ui";
+  ListPagination,
+  usePagination,
+} from "@/components/internal/shared/pagination";
+import { ActionMenu, Button } from "@geiger/ui";
 import FilterDropdown from "@/components/internal/screens/overview/filter_dropdown";
 import {
   MEMBER_STATUS_MAP,
@@ -38,7 +35,6 @@ export default function MembersTab({
   total,
   roleById,
   roleIdOf,
-  grantByUser,
   canAssign,
   groupById,
   roles,
@@ -53,11 +49,16 @@ export default function MembersTab({
   roleFilterOptions,
   groupFilterOptions,
   onOpen,
+  onEdit,
   onChangeRole,
   onToggleSuspend,
   onRemove,
   onInvite,
 }) {
+  const pager = usePagination(members, {
+    resetKey: `${search}|${statusFilter}|${roleFilter}|${groupFilter}`,
+  });
+
   const columns = [
     {
       key: "member",
@@ -114,41 +115,27 @@ export default function MembersTab({
       header: "",
       align: "right",
       render: (m) => (
-        <div onClick={(e) => e.stopPropagation()} className="flex justify-end">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Member actions">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="border-border bg-surface-subtle">
-              <DropdownMenuItem onClick={() => onOpen(m)} className="cursor-pointer focus:bg-surface-hover">
-                <Users className="h-4 w-4" /> Manage
-              </DropdownMenuItem>
-              {canAssign ? (
-                <>
-                  <DropdownMenuItem onClick={() => onToggleSuspend(m)} className="cursor-pointer focus:bg-surface-hover">
-                    {m.status === "suspended" ? (
-                      <>
-                        <CircleCheck className="h-4 w-4" /> Reactivate
-                      </>
-                    ) : (
-                      <>
-                        <Ban className="h-4 w-4" /> Suspend
-                      </>
-                    )}
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={() => onRemove(m)}
-                    className="cursor-pointer text-red-400 focus:bg-red-500/10 focus:text-red-300"
-                  >
-                    <Trash2 className="h-4 w-4" /> Remove
-                  </DropdownMenuItem>
-                </>
-              ) : null}
-            </DropdownMenuContent>
-          </DropdownMenu>
+        // Edit opens the full editor; Manage keeps the lighter row-click drawer.
+        <div className="flex justify-end">
+          <ActionMenu
+            label={`Actions for ${m.name || m.email}`}
+            items={[
+              { icon: Pencil, label: "Edit", onSelect: () => onEdit(m) },
+              { icon: Users, label: "Manage", onSelect: () => onOpen(m) },
+              canAssign && {
+                icon: m.status === "suspended" ? CircleCheck : Ban,
+                label: m.status === "suspended" ? "Reactivate" : "Suspend",
+                onSelect: () => onToggleSuspend(m),
+              },
+              { separator: true },
+              canAssign && {
+                icon: Trash2,
+                label: "Remove",
+                variant: "destructive",
+                onSelect: () => onRemove(m),
+              },
+            ]}
+          />
         </div>
       ),
     },
@@ -192,30 +179,39 @@ export default function MembersTab({
 
       <DataTable
         columns={columns}
-        data={members}
+        data={pager.pageItems}
         getRowKey={(m) => m.id}
         onRowClick={onOpen}
         empty={
-          total === 0 ? (
-            <EmptyState
-              icon={Users}
-              title="No members yet"
-              description="Invite teammates to collaborate on this workspace."
-              action={
-                <Button onClick={onInvite} className="bg-primary text-primary-foreground">
-                  <UserPlus className="h-4 w-4" /> Invite people
-                </Button>
-              }
-            />
-          ) : (
-            <EmptyState
-              icon={Users}
-              title="No matching members"
-              description={filtersActive ? "Try clearing your filters." : "Nothing here."}
-            />
-          )
+          <div className="rounded-xl border border-border bg-surface-subtle">
+            {total === 0 ? (
+              <EmptyState
+                icon={Users}
+                title="No members yet"
+                description="Invite teammates to collaborate on this workspace."
+                action={
+                  <Button
+                    onClick={onInvite}
+                    className="bg-primary text-primary-foreground"
+                  >
+                    <UserPlus className="h-4 w-4" /> Invite people
+                  </Button>
+                }
+              />
+            ) : (
+              <EmptyState
+                icon={Users}
+                title="No matching members"
+                description={
+                  filtersActive ? "Try clearing your filters." : "Nothing here."
+                }
+              />
+            )}
+          </div>
         }
       />
+
+      <ListPagination {...pager} itemLabel="members" />
     </div>
   );
 }

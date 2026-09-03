@@ -1,29 +1,50 @@
 "use client";
 
-// Views — saved §3.3 filters over an ordinary MainScreenWrapper frame
-// (spec §6): ScreenHeader → StatsBar-less DataTable with a create/edit dialog
-// that builds the filter object. Row click applies the view and navigates to
-// All Conversations with ?view=<id>.
+// Views — saved §3.3 conversation filters (spec §6). Follows the suite list
+// pattern: header + create, KPI bar, toolbar filter/search, a DataTable of
+// saved views and pagination. Selecting a row opens the view in the URL
+// (?view=<id>) and swaps to the full-page editor; "Apply" is the separate
+// handoff that carries the view over to All Conversations.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input } from "@geiger/ui";
-import { Copy, ListFilter, Pencil, Plus, Share2, Trash2 } from "lucide-react";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
+  Copy,
+  ListFilter,
+  Loader2,
+  Pencil,
+  Play,
+  Plus,
+  Share2,
+  Trash2,
+} from "lucide-react";
+import {
+  ActionMenu,
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Input,
 } from "@geiger/ui";
 import { MainScreenWrapper } from "@/components/internal/shared/screen_wrappers";
+import {
+  ListPagination,
+  usePagination,
+} from "@/components/internal/shared/pagination";
 import {
   DataTable,
   EmptyState,
   Field,
   ScreenHeader,
+  SearchInput,
+  StatsBar,
   StatusPill,
+  Toolbar,
 } from "@/components/internal/shared/screen_kit";
+import FilterDropdown from "@/components/internal/screens/overview/filter_dropdown";
 import { useOptionalProject } from "@/context/project-context";
 import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
 import { useCan } from "@/context/rbac-context";
@@ -33,6 +54,7 @@ import {
   softDeleteView,
   updateView,
 } from "@/lib/supabase/views";
+import { getUser } from "@/lib/supabase/user";
 import {
   ASSIGNEE_FILTER_OPTIONS,
   CHANNEL_FILTER_OPTIONS,
@@ -40,6 +62,17 @@ import {
   SORT_OPTIONS,
   STATUS_FILTER_OPTIONS,
 } from "./constants";
+import {
+  MultiCheck,
+  SHARED_FILTER_OPTIONS,
+  VIEW_SHARED_MAP,
+  filterCount,
+  filterSummary,
+  formatDate,
+  sharedKey,
+  sortLabel,
+} from "./view_sections";
+import { ViewDetailScreen } from "./view_detail";
 
 const EMPTY_DRAFT = {
   name: "",
@@ -51,28 +84,23 @@ const EMPTY_DRAFT = {
   sort: "newest",
 };
 
-function filterSummary(filter = {}) {
-  const parts = [];
-  if (filter.status?.length) parts.push(`Status: ${filter.status.join(", ")}`);
-  if (filter.channel?.length) parts.push(`Channel: ${filter.channel.join(", ")}`);
-  if (filter.priority?.length) parts.push(`Priority: ${filter.priority.join(", ")}`);
-  if (filter.assignee === "me") parts.push("Assigned to me");
-  if (filter.assignee === "unassigned") parts.push("Unassigned");
-  if (filter.unread) parts.push("Unread only");
-  return parts.length ? parts.join(" · ") : "All conversations";
-}
+const SELECT_CLASS =
+  "h-9 w-full rounded-md border border-border bg-surface-card px-3 text-sm text-foreground outline-none focus-visible:border-border-strong focus-visible:ring-2 focus-visible:ring-border";
 
 export function ViewsScreen() {
   const { projectId } = useOptionalProject() ?? {};
-  const { openViewInTab } = useWorkspaceUrl();
+  const { viewId, openView, closeView, openViewInTab } = useWorkspaceUrl();
   // comms.settings.manage gates who may edit shared configuration surfaces;
   // viewing is open like the rest of the workspace by default.
   const canManage = useCan("comms.settings.manage");
 
   const [views, setViews] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(null); // null | "new" | view row
+  const [search, setSearch] = useState("");
+  const [shared, setShared] = useState("all");
+  const [createOpen, setCreateOpen] = useState(false);
   const [draft, setDraft] = useState(EMPTY_DRAFT);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -86,30 +114,63 @@ export function ViewsScreen() {
     };
   }, [projectId]);
 
+  const selected = useMemo(
+    () => (viewId ? views.find((v) => v.id === viewId) || null : null),
+    [viewId, views],
+  );
+
+  const filtered = useMemo(
+    () =>
+      views.filter((v) => {
+        if (shared !== "all" && sharedKey(v) !== shared) return false;
+        if (
+          search &&
+          !`${v.name} ${filterSummary(v.filter)}`
+            .toLowerCase()
+            .includes(search.toLowerCase())
+        )
+          return false;
+        return true;
+      }),
+    [views, search, shared],
+  );
+
+  const pager = usePagination(filtered, { resetKey: `${search}|${shared}` });
+
+  const stats = useMemo(() => {
+    const sharedCount = views.filter((v) => v.shared).length;
+    const scoped = views.filter((v) => filterCount(v.filter) > 0).length;
+    return [
+      {
+        label: "Views",
+        value: String(views.length),
+        footer: `${sharedCount} shared with the team`,
+      },
+      { label: "Shared", value: String(sharedCount), footer: "Visible to everyone" },
+      {
+        label: "Private",
+        value: String(views.length - sharedCount),
+        footer: "Only visible to you",
+      },
+      { label: "Scoped", value: String(scoped), footer: "With at least one filter" },
+    ];
+  }, [views]);
+
   function openCreate() {
     setDraft(EMPTY_DRAFT);
-    setEditing("new");
+    setCreateOpen(true);
   }
 
-  function openEdit(view) {
-    setDraft({
-      name: view.name,
-      status: view.filter.status ?? [],
-      channel: view.filter.channel ?? [],
-      priority: view.filter.priority ?? [],
-      assignee: view.filter.assignee ?? "",
-      unread: Boolean(view.filter.unread),
-      sort: view.sort ?? "newest",
-    });
-    setEditing(view);
-  }
-
-  async function save() {
+  // The dialog is create-only — editing an existing view happens in the editor.
+  async function handleCreate() {
     if (!draft.name.trim()) {
       toast.error("Give the view a name.");
       return;
     }
+    const optimisticId = crypto.randomUUID();
+    const user = await getUser();
     const payload = {
+      id: optimisticId,
       name: draft.name.trim(),
       sort: draft.sort,
       filter: {
@@ -119,106 +180,123 @@ export function ViewsScreen() {
         assignee: draft.assignee || null,
         unread: draft.unread ? true : null,
       },
+      projectId,
+      createdBy: user?.id ?? null,
     };
-    if (editing === "new") {
-      const created = await createView({ ...payload, projectId });
-      if (!created) {
-        toast.error("Couldn't create the view.");
-        return;
-      }
-      setViews((prev) => [...prev, created]);
-      toast.success("View created");
-    } else {
-      const saved = await updateView(editing.id, payload);
-      if (!saved) {
-        toast.error("Couldn't save the view.");
-        return;
-      }
-      setViews((prev) => prev.map((v) => (v.id === saved.id ? saved : v)));
-      toast.success("View saved");
+    setCreateOpen(false);
+    setViews((prev) => [
+      ...prev,
+      { ...payload, shared: false, createdAt: new Date().toISOString() },
+    ]);
+    const created = await createView(payload);
+    if (!created) {
+      setViews((prev) => prev.filter((v) => v.id !== optimisticId));
+      toast.error("Couldn't create the view.");
+      return;
     }
-    setEditing(null);
+    setViews((prev) => prev.map((v) => (v.id === created.id ? created : v)));
+    toast.success("View created");
+    openView(created.id);
   }
 
-  function applyView(view) {
-    // One navigation: All Conversations with ?view=<id> applied (spec §6).
-    openViewInTab(view.id, "All Conversations");
-  }
+  // The editor lifts every edit back up so the list and the open row agree.
+  const handleUpdate = (updated) =>
+    setViews((prev) => prev.map((v) => (v.id === updated.id ? updated : v)));
 
-  async function duplicate(view) {
-    const copy = await createView({
+  // "Apply" is the handoff to All Conversations — distinct from opening the
+  // editor, which keeps you on this tab.
+  const applyView = (view) => openViewInTab(view.id, "All Conversations");
+
+  async function handleDuplicate(view) {
+    const optimisticId = crypto.randomUUID();
+    const user = await getUser();
+    const copy = {
+      ...view,
+      id: optimisticId,
       name: `${view.name} copy`,
+      shared: false,
+      createdAt: new Date().toISOString(),
+    };
+    setViews((prev) => [...prev, copy]);
+    const created = await createView({
+      id: optimisticId,
+      name: copy.name,
       sort: view.sort,
       filter: { ...view.filter },
       projectId,
+      createdBy: user?.id ?? null,
     });
-    if (!copy) {
+    if (!created) {
+      setViews((prev) => prev.filter((v) => v.id !== optimisticId));
       toast.error("Couldn't duplicate the view.");
       return;
     }
-    setViews((prev) => [...prev, copy]);
+    setViews((prev) => prev.map((v) => (v.id === created.id ? created : v)));
     toast.success("View duplicated");
   }
 
-  async function toggleShare(view) {
-    const previous = views;
-    setViews((prev) => prev.map((v) => (v.id === view.id ? { ...v, shared: !v.shared } : v)));
-    const saved = await updateView(view.id, { shared: !view.shared });
+  async function handleToggleShare(view) {
+    const next = !view.shared;
+    setViews((prev) =>
+      prev.map((v) => (v.id === view.id ? { ...v, shared: next } : v)),
+    );
+    const saved = await updateView(view.id, { shared: next });
     if (!saved) {
-      setViews(previous);
+      setViews((prev) => prev.map((v) => (v.id === view.id ? view : v)));
       toast.error("Couldn't update sharing.");
       return;
     }
-    toast.success(saved.shared ? "Shared with the team" : "Sharing off");
+    toast.success(next ? "Shared with the team" : "Sharing off");
   }
 
-  async function remove(view) {
+  async function handleDelete(view) {
+    setDeleteTarget(null);
     const previous = views;
     setViews((prev) => prev.filter((v) => v.id !== view.id));
+    if (viewId === view.id) closeView();
     const ok = await softDeleteView(view.id);
     if (!ok) {
       setViews(previous);
       toast.error("Couldn't delete the view.");
       return;
     }
-    toast.success("View deleted");
+    toast.success(`Deleted “${view.name}”.`);
   }
 
-  // Plain array (not memoized): the row-action closures read the freshest
-  // state through functional updates either way, and the table is small.
   const columns = [
     {
       key: "name",
       header: "Name",
       render: (row) => (
         <div className="flex items-center gap-2">
-          <ListFilter className="h-4 w-4 text-text-tertiary" />
+          <ListFilter className="h-4 w-4 shrink-0 text-text-tertiary" />
           <div className="min-w-0">
             <p className="truncate font-medium text-foreground">{row.name}</p>
-            <p className="truncate text-xs text-text-secondary">{filterSummary(row.filter)}</p>
+            <p className="truncate text-xs text-text-secondary">
+              {filterSummary(row.filter)}
+            </p>
           </div>
         </div>
       ),
     },
     {
       key: "shared",
-      header: "Shared",
-      render: (row) =>
-        row.shared ? (
-          <StatusPill
-            status="Shared"
-            map={{ Shared: { label: "Shared", variant: "success", dotClass: "bg-emerald-400" } }}
-          />
-        ) : (
-          <span className="text-xs text-text-tertiary">Private</span>
-        ),
+      header: "Sharing",
+      render: (row) => <StatusPill status={sharedKey(row)} map={VIEW_SHARED_MAP} />,
     },
     {
       key: "sort",
       header: "Sort",
       render: (row) => (
+        <span className="text-sm text-text-secondary">{sortLabel(row.sort)}</span>
+      ),
+    },
+    {
+      key: "created",
+      header: "Created",
+      render: (row) => (
         <span className="text-sm text-text-secondary">
-          {SORT_OPTIONS.find((o) => o.value === row.sort)?.label ?? row.sort}
+          {formatDate(row.createdAt) || "—"}
         </span>
       ),
     },
@@ -226,94 +304,166 @@ export function ViewsScreen() {
       key: "actions",
       header: "",
       align: "right",
-      className: "w-12",
+      className: "w-12 text-right",
       render: (row) => (
-        <div onClick={(e) => e.stopPropagation()} className="flex justify-end">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label={`${row.name} actions`}>
-                <Pencil />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="border-border bg-surface-subtle">
-              <DropdownMenuItem className="text-xs" onClick={() => openEdit(row)}>
-                <Pencil /> Edit
-              </DropdownMenuItem>
-              <DropdownMenuItem className="text-xs" onClick={() => void duplicate(row)}>
-                <Copy /> Duplicate
-              </DropdownMenuItem>
-              <DropdownMenuItem className="text-xs" onClick={() => void toggleShare(row)}>
-                <Share2 /> {row.shared ? "Stop sharing" : "Share with team"}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator className="bg-border" />
-              <DropdownMenuItem variant="destructive" className="text-xs" onClick={() => void remove(row)}>
-                <Trash2 /> Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        <ActionMenu
+          label={`Actions for ${row.name}`}
+          items={[
+            { icon: Pencil, label: "Edit", onSelect: () => openView(row.id) },
+            { icon: Play, label: "Apply", onSelect: () => applyView(row) },
+            { icon: Copy, label: "Duplicate", onSelect: () => handleDuplicate(row) },
+            {
+              icon: Share2,
+              label: row.shared ? "Stop sharing" : "Share with team",
+              onSelect: () => handleToggleShare(row),
+            },
+            { separator: true },
+            {
+              icon: Trash2,
+              label: "Delete",
+              variant: "destructive",
+              onSelect: () => setDeleteTarget(row),
+            },
+          ]}
+        />
       ),
     },
   ];
+
+  // Confirmation lives outside the list/editor branch so the editor's danger
+  // zone gets the same dialog the row action does.
+  const deleteDialog = (
+    <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Delete view</DialogTitle>
+          <DialogDescription>
+            Are you sure you want to delete{" "}
+            <span className="font-medium text-foreground">{deleteTarget?.name}</span>?
+            Conversations are untouched — only the saved filter goes away.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setDeleteTarget(null)}>
+            Cancel
+          </Button>
+          <Button
+            className="bg-red-500/90 text-white hover:bg-red-500"
+            onClick={() => handleDelete(deleteTarget)}
+          >
+            <Trash2 className="h-4 w-4" /> Delete
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  if (selected) {
+    return (
+      <>
+        <ViewDetailScreen
+          view={selected}
+          onBack={closeView}
+          onUpdate={handleUpdate}
+          onDelete={setDeleteTarget}
+          onApply={applyView}
+        />
+        {deleteDialog}
+      </>
+    );
+  }
+
+  const createButton = canManage ? (
+    <Button
+      className="bg-primary text-primary-foreground hover:bg-primary/90"
+      onClick={openCreate}
+    >
+      <Plus className="h-4 w-4" /> New view
+    </Button>
+  ) : null;
 
   return (
     <MainScreenWrapper>
       <ScreenHeader
         title="Views"
         description="Saved filters for the conversations list. Apply one from here or share it with the team."
-        actions={
-          canManage ? (
-            <Button type="button" size="sm" className="gap-1.5" onClick={openCreate}>
-              <Plus className="size-3.5" /> New view
-            </Button>
-          ) : null
-        }
+        actions={createButton}
       />
 
+      <StatsBar stats={stats} />
+
+      <Toolbar>
+        <div className="flex items-center gap-2">
+          <FilterDropdown
+            value={shared}
+            onValueChange={setShared}
+            options={SHARED_FILTER_OPTIONS}
+            height="h-9"
+          />
+        </div>
+        <SearchInput value={search} onChange={setSearch} placeholder="Search views…" />
+      </Toolbar>
+
       {loading ? (
-        <div className="space-y-2 rounded-xl border border-border bg-surface-subtle p-4">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-10 rounded-md border border-border bg-surface-card" />
-          ))}
+        <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-subtle px-6 py-16 text-sm text-text-secondary">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading views…
         </div>
       ) : (
-        <DataTable
-          columns={columns}
-          data={views}
-          getRowKey={(row) => row.id}
-          onRowClick={applyView}
-          empty={
-            <EmptyState
-              icon={ListFilter}
-              title="No views yet"
-              description="Create a view to save a conversation filter — e.g. “Urgent & unassigned”."
-              action={
-                canManage ? (
-                  <Button type="button" size="sm" onClick={openCreate}>
-                    New view
-                  </Button>
-                ) : null
-              }
-              className="rounded-xl border border-border bg-surface-subtle"
-            />
-          }
-        />
+        <div className="space-y-5">
+          <DataTable
+            columns={columns}
+            data={pager.pageItems}
+            getRowKey={(row) => row.id}
+            onRowClick={(row) => openView(row.id)}
+            empty={
+              <div className="rounded-xl border border-border bg-surface-subtle">
+                <EmptyState
+                  icon={ListFilter}
+                  title={views.length ? "No views match your filters" : "No views yet"}
+                  description={
+                    views.length
+                      ? "Try clearing the search or the sharing filter."
+                      : "Create a view to save a conversation filter — e.g. “Urgent & unassigned”."
+                  }
+                  action={
+                    views.length ? (
+                      <Button
+                        variant="outline"
+                        className="border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
+                        onClick={() => {
+                          setSearch("");
+                          setShared("all");
+                        }}
+                      >
+                        Clear filters
+                      </Button>
+                    ) : (
+                      createButton
+                    )
+                  }
+                />
+              </div>
+            }
+          />
+          <ListPagination {...pager} itemLabel="views" />
+        </div>
       )}
 
-      {/* Edit / create dialog */}
-      <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && setEditing(null)}>
+      {/* Create-only: an existing view is edited on its own page. */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editing === "new" ? "New view" : "Edit view"}</DialogTitle>
+            <DialogTitle>New view</DialogTitle>
             <DialogDescription>
               A view is a saved conversation filter. It means the right thing for
               each person when it uses “assigned to me”.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">
-            <Field label="Name" htmlFor="view-name">
+            <Field label="Name" htmlFor="view-draft-name">
               <Input
-                id="view-name"
+                id="view-draft-name"
                 value={draft.name}
                 onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
                 placeholder="Urgent & unassigned"
@@ -339,12 +489,12 @@ export function ViewsScreen() {
               onChange={(priority) => setDraft((d) => ({ ...d, priority }))}
             />
 
-            <Field label="Assignee" htmlFor="view-assignee">
+            <Field label="Assignee" htmlFor="view-draft-assignee">
               <select
-                id="view-assignee"
+                id="view-draft-assignee"
                 value={draft.assignee}
                 onChange={(e) => setDraft((d) => ({ ...d, assignee: e.target.value }))}
-                className="h-9 w-full rounded-md border border-border bg-surface-card px-3 text-sm text-foreground outline-none focus-visible:border-border-strong focus-visible:ring-2 focus-visible:ring-border"
+                className={SELECT_CLASS}
               >
                 {ASSIGNEE_FILTER_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -364,12 +514,12 @@ export function ViewsScreen() {
               Unread only
             </label>
 
-            <Field label="Sort" htmlFor="view-sort">
+            <Field label="Sort" htmlFor="view-draft-sort">
               <select
-                id="view-sort"
+                id="view-draft-sort"
                 value={draft.sort}
                 onChange={(e) => setDraft((d) => ({ ...d, sort: e.target.value }))}
-                className="h-9 w-full rounded-md border border-border bg-surface-card px-3 text-sm text-foreground outline-none focus-visible:border-border-strong focus-visible:ring-2 focus-visible:ring-border"
+                className={SELECT_CLASS}
               >
                 {SORT_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -380,51 +530,23 @@ export function ViewsScreen() {
             </Field>
           </div>
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => setEditing(null)}>
+            <Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
               Cancel
             </Button>
-            <Button type="button" onClick={() => void save()} disabled={!draft.name.trim()}>
-              Save view
+            <Button
+              type="button"
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+              onClick={() => void handleCreate()}
+              disabled={!draft.name.trim()}
+            >
+              Create view
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </MainScreenWrapper>
-  );
-}
 
-// Checkbox group used inside the view builder.
-function MultiCheck({ label, options, selected, onChange }) {
-  return (
-    <fieldset>
-      <legend className="mb-1.5 text-sm font-medium text-muted-foreground">{label}</legend>
-      <div className="flex flex-wrap gap-1.5">
-        {options.map((option) => {
-          const active = selected.includes(option.value);
-          return (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() =>
-                onChange(
-                  active
-                    ? selected.filter((v) => v !== option.value)
-                    : [...selected, option.value],
-                )
-              }
-              className={
-                "rounded-md border px-2.5 py-1 text-xs font-medium transition-colors " +
-                (active
-                  ? "border-primary/40 bg-primary/10 text-foreground"
-                  : "border-border bg-surface-card text-text-secondary hover:text-foreground")
-              }
-            >
-              {option.label}
-            </button>
-          );
-        })}
-      </div>
-    </fieldset>
+      {deleteDialog}
+    </MainScreenWrapper>
   );
 }
 
