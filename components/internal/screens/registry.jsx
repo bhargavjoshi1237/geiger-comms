@@ -16,6 +16,9 @@ import { AllConversationsScreen } from "./inbox/all_conversations";
 import { MentionsScreen } from "./inbox/mentions";
 import { ViewsScreen } from "./inbox/views";
 import { TicketsScreen } from "./inbox/tickets";
+import { PeopleScreen } from "./customers/people";
+import { CompaniesScreen } from "./customers/companies";
+import { SegmentsScreen } from "./customers/segments";
 import { workspaceNav } from "@/components/internal/sidebar/sidebar_nav";
 
 // Resolves the nav item (top-level or sub) for a title, for ComingSoon labels.
@@ -38,6 +41,9 @@ const REGISTERED = new Set([
   "Mentions",
   "Views",
   "Tickets",
+  "People",
+  "Companies",
+  "Segments",
   "Navigation",
   "Teammates",
   "Roles & Permissions",
@@ -72,6 +78,12 @@ export function ActiveScreen({ tab }) {
       return <ViewsScreen />;
     case "Tickets":
       return <TicketsScreen />;
+    case "People":
+      return <PeopleScreen />;
+    case "Companies":
+      return <CompaniesScreen />;
+    case "Segments":
+      return <SegmentsScreen />;
     case "Navigation":
       return <NavigationSettingsScreen />;
     case "Teammates":
