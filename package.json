@@ -18,7 +18,7 @@
     "@anthropic-ai/sdk": "^0.124.0",
     "@geiger/orm": "github:bhargavjoshi1237/geiger-orm#master",
     "@geiger/rbac": "github:bhargavjoshi1237/geiger-rbac#1835de3735cf9c86df5adebdbc7458dd4302e40d",
-    "@geiger/ui": "github:bhargavjoshi1237/geiger-ui#7be8afc13d554a91c5c7aebbe95c21e7a7fa67ee",
+    "@geiger/ui": "github:bhargavjoshi1237/geiger-ui#3e39407aa598ba03f55356c9c4e1e23b4dc42659",
     "@radix-ui/react-slider": "^1.4.2",
     "@radix-ui/react-switch": "^1.3.2",
     "@radix-ui/react-tabs": "^1.1.16",
