@@ -11,12 +11,14 @@
     "db:status": "geiger-orm status",
     "db:rollback": "geiger-orm rollback",
     "db:new": "geiger-orm create",
-    "db:seed": "geiger-orm seed"
+    "db:seed": "geiger-orm seed",
+    "db:seed:inbox": "node scripts/seed-inbox.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0",
     "@geiger/orm": "github:bhargavjoshi1237/geiger-orm#master",
     "@geiger/rbac": "github:bhargavjoshi1237/geiger-rbac#1835de3735cf9c86df5adebdbc7458dd4302e40d",
-    "@geiger/ui": "github:bhargavjoshi1237/geiger-ui#f66c10da7a5544b462360a747c2a40987493b5a9",
+    "@geiger/ui": "github:bhargavjoshi1237/geiger-ui#7be8afc13d554a91c5c7aebbe95c21e7a7fa67ee",
     "@radix-ui/react-slider": "^1.4.2",
     "@radix-ui/react-switch": "^1.3.2",
     "@radix-ui/react-tabs": "^1.1.16",
