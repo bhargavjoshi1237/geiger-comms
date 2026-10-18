@@ -32,6 +32,14 @@ export default defineNavConfig({
     // Customers — People is the hub; segments are a lens on it.
     { screen: "Segments", requires: ["People"] },
 
+    // Automation — templates and run history are views onto the workflows.
+    {
+      screen: "Workflow Templates",
+      requires: ["Workflows"],
+      reason: "A template opens as a new workflow in the builder.",
+    },
+    { screen: "Run History", requires: ["Workflows"] },
+
     // AI Agent — Train is the lifecycle hub; the agent answers from the KB.
     {
       screen: "Knowledge Sources",
