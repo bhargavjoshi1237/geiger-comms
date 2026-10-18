@@ -43,7 +43,7 @@ export function WidgetTestLauncher({ projectId }) {
     if (!projectId) return undefined;
     let active = true;
 
-    fetch(apiPath("/api/widget-apps"))
+    fetch(apiPath(`/api/widget-apps?projectId=${encodeURIComponent(projectId)}`))
       .then((res) => (res.ok ? res.json() : []))
       .then((rows) => {
         if (!active) return;

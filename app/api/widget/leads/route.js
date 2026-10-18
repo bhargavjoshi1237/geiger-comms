@@ -1,16 +1,12 @@
-// POST /api/widget/leads — capture an offline lead so the workspace Inbox
-// can follow up by email. Validates email shape, length-limits the message
-// body, and rate-limits per session. Anonymous (no session) leads are
-// permitted; they're held under the originating app's project so the
-// workspace can match them when a teammate logs in.
+// POST /api/widget/leads — capture an offline lead { email, message } so the workspace can follow up by email.
+// With a session the app comes from the token; without one (?appId=) the host origin must be allowlisted exactly like boot (§10.2).
 
 import { errorResponse, jsonResponse, readJsonBody } from "@/lib/widget/respond";
-import { isWidgetApiConfigured } from "@/lib/widget/service";
-import { serviceClient } from "@/lib/widget/service";
-import { rateLimit } from "@/lib/widget/ratelimit";
+import { isWidgetApiConfigured, serviceClient } from "@/lib/widget/service";
+import { clientIp, rateLimitAll } from "@/lib/widget/ratelimit";
 import { requirePrincipal } from "@/lib/widget/auth";
 import { getAppById, getAppByPublicId } from "@/lib/widget/apps";
-import { originAllowed } from "@/lib/widget/origins";
+import { embedOrigin, originAllowed } from "@/lib/widget/origins";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,31 +22,30 @@ export async function POST(request) {
   if (!EMAIL_RE.test(email) || email.length > 254) return errorResponse(400, "bad_email");
   if (!message || message.length > 5000) return errorResponse(400, "bad_message");
 
-  // Two paths: a logged-in visitor uses the widget session; an anonymous
-  // submission uses the originating appId + origin.
   let app = null;
   const principal = await requirePrincipal(request);
   if (principal) {
     app = await getAppById(principal.appId);
   } else {
-    const url = new URL(request.url);
-    const appId = url.searchParams.get("appId");
+    const appId = new URL(request.url).searchParams.get("appId");
     if (!appId) return errorResponse(400, "missing_app");
     app = await getAppByPublicId(appId);
-    const origin = request.headers.get("origin");
-    if (!app || !origin || !originAllowed(app.allowed_origins, origin)) {
+    if (!app) return errorResponse(404, "app_not_found");
+    const hostOrigin = embedOrigin(request, typeof body.parentOrigin === "string" ? body.parentOrigin : null);
+    if (!hostOrigin || !originAllowed(app.allowed_origins, hostOrigin)) {
       return errorResponse(403, "origin_not_allowed");
     }
   }
   if (!app) return errorResponse(404, "app_not_found");
 
-  if (!rateLimit(`leads:${app.public_id}`, 20, 60_000)) {
-    return errorResponse(429, "rate_limited");
-  }
+  const allowed = rateLimitAll([
+    [`leads:ip:${clientIp(request)}`, 10, 60_000],
+    [`leads:app:${app.id}`, 300, 60_000],
+  ]);
+  if (!allowed) return errorResponse(429, "rate_limited");
 
   try {
-    const sb = serviceClient();
-    const { data, error } = await sb
+    const { data, error } = await serviceClient()
       .from("leads")
       .insert({
         app_id: app.id,

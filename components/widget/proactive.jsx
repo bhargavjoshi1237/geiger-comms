@@ -1,9 +1,7 @@
 "use client";
 
-// Proactive message — a compact card from a named teammate with two answers
-// and a reply box. Inside the iframe it floats over the panel (see the framed
-// overrides in app/widget/widget.css); on a host page the same markup sits
-// above the launcher.
+// Proactive message card — not mounted until the Proactive section supplies real messages (spec §9.1 defers it).
+// Inside the iframe it floats over the panel (framed overrides in app/widget/widget.css).
 
 import { useEffect, useState } from "react";
 import { ArrowUp, Avatar, X } from "./widget_primitives";
@@ -19,7 +17,7 @@ export function ProactivePopup({ message, onReply, onDismiss }) {
 
   if (!message) return null;
 
-  const author = message.author || "Maya from Northwind";
+  const author = message.author || "The team";
   const [confirm, dismiss] = message.actions || [];
 
   function send() {

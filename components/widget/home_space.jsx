@@ -1,23 +1,20 @@
 "use client";
 
-// Home — the messenger's landing screen as drawn: brand row, two-line greeting,
-// the "Ask <assistant>" hero card, the most recent conversation and a help
-// search box. The bottom nav belongs to the panel, not to this screen.
-//
-// Everything below the header comes from the data layer: the recent thread is
-// the first row of /conversations, and the search box hands its query to the
-// Help space rather than searching in place.
+// Home (spec §9): greeting, "Send us a message", the most recent conversation and a help search box.
+// Brand, greeting and assistant all come from the server config; the conversation list comes from the app root.
 
-import { useCallback, useEffect, useState } from "react";
 import {
   AiBadge,
   Avatar,
+  BrandLogo,
   Cap,
   ChevronRight,
   ErrorState,
   LoadingState,
+  MessageCircle,
   Search,
   Sparkles,
+  UnreadCount,
   X,
 } from "./widget_primitives";
 
@@ -36,10 +33,9 @@ function relativeShort(iso) {
   }
 }
 
-// "Hi there. How can we help?" reads as two lines in the design — a bold
-// salutation over a muted question.
+// "Hi there. How can we help?" reads as two lines in the design — a bold salutation over a muted question.
 function splitGreeting(greeting) {
-  const text = String(greeting || "Hi there. How can we help?").trim();
+  const text = String(greeting || "").trim();
   const at = text.indexOf(".");
   if (at > 0 && at < text.length - 1) {
     return [text.slice(0, at + 1), text.slice(at + 1).trim()];
@@ -47,41 +43,29 @@ function splitGreeting(greeting) {
   return [text, ""];
 }
 
-export function HomeSpace({ getApi, config, navigate, postToHost }) {
-  const [conversations, setConversations] = useState(null);
-  const [failed, setFailed] = useState(false);
-
-  const assistant = config?.assistantName || "Aria";
-  const brand = config?.name || "Northwind Help";
+export function HomeSpace({
+  config,
+  navigate,
+  postToHost,
+  content,
+  conversations,
+  conversationsFailed,
+  reloadConversations,
+  unreadMap,
+}) {
+  const assistant = config?.assistantName || "";
+  const brand = config?.name || "Support";
   const [salutation, question] = splitGreeting(config?.greeting);
-
-  const load = useCallback(() => {
-    getApi()
-      ?.conversations()
-      .then((rows) => {
-        setConversations(rows ?? []);
-        setFailed(false);
-      })
-      .catch(() => {
-        setFailed(true);
-        setConversations([]);
-      });
-  }, [getApi]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
   const recent = conversations?.[0];
+  const recentUnread = recent ? unreadMap?.[recent.id] || 0 : 0;
+  const helpAvailable = config?.spaces?.help !== false && content?.help === true;
 
   return (
     <>
       <header className="gc-header gc-header--home">
         <div className="gc-header__row">
           <div className="gc-header__brand">
-            <div className="gc-header__logo" aria-hidden="true">
-              {(brand.match(/[A-Z]/g) || ["N"]).slice(0, 2).join("")}
-            </div>
+            <BrandLogo name={brand} logoUrl={config?.logoUrl} />
             <span className="gc-header__brandname">{brand}</span>
           </div>
           <button
@@ -100,26 +84,39 @@ export function HomeSpace({ getApi, config, navigate, postToHost }) {
       </header>
 
       <div className="gc-home">
-        <button type="button" className="gc-card" onClick={() => navigate({ space: "ask" })}>
+        <button type="button" className="gc-card" onClick={() => navigate({ space: "messages", compose: true })}>
           <div className="gc-card__icon" aria-hidden="true">
-            <Sparkles size={15} />
+            <MessageCircle size={15} />
           </div>
           <div className="gc-card__body">
             <div className="gc-card__titlerow">
-              <span className="gc-card__title">Ask {assistant}</span>
-              <AiBadge />
+              <span className="gc-card__title">Send us a message</span>
             </div>
-            <p className="gc-card__desc">
-              {config?.assistantTagline || "Answers about your order, return or account in seconds."}
-            </p>
+            <p className="gc-card__desc">{config?.officeHoursNote || "We'll reply here as soon as we can."}</p>
           </div>
           <ChevronRight className="gc-card__chev" />
         </button>
 
-        {conversations === null ? (
+        {assistant ? (
+          <button type="button" className="gc-card" onClick={() => navigate({ space: "ask" })}>
+            <div className="gc-card__icon" aria-hidden="true">
+              <Sparkles size={15} />
+            </div>
+            <div className="gc-card__body">
+              <div className="gc-card__titlerow">
+                <span className="gc-card__title">Ask {assistant}</span>
+                <AiBadge />
+              </div>
+              <p className="gc-card__desc">{config?.assistantTagline || "Get an instant answer from our AI assistant."}</p>
+            </div>
+            <ChevronRight className="gc-card__chev" />
+          </button>
+        ) : null}
+
+        {conversations === null && !conversationsFailed ? (
           <LoadingState label="Checking for conversations…" />
-        ) : failed ? (
-          <ErrorState title="Couldn't load your conversations" onRetry={load} />
+        ) : conversationsFailed ? (
+          <ErrorState title="Couldn't load your conversations" onRetry={reloadConversations} />
         ) : recent ? (
           <>
             <div className="gc-sectionrow">
@@ -133,7 +130,7 @@ export function HomeSpace({ getApi, config, navigate, postToHost }) {
               className="gc-recent"
               onClick={() => navigate({ space: "messages", conversationId: recent.id })}
             >
-              <Avatar name={recent.agentName || recent.subject} showStatus online={recent.state !== "closed"} />
+              <Avatar name={recent.agentName || recent.subject || brand} />
               <div className="gc-recent__body">
                 <div className="gc-recent__top">
                   <span className="gc-recent__name">{recent.agentName || recent.subject || "Your conversation"}</span>
@@ -141,27 +138,30 @@ export function HomeSpace({ getApi, config, navigate, postToHost }) {
                 </div>
                 <p className="gc-recent__preview">{recent.preview || "Tap to open"}</p>
               </div>
+              {recentUnread ? <UnreadCount count={recentUnread} /> : null}
             </button>
           </>
         ) : null}
 
-        <form
-          className="gc-search"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const input = e.currentTarget.elements.namedItem("q");
-            navigate({ space: "help", query: input?.value || "" });
-          }}
-        >
-          <Search className="gc-search__icon" />
-          <input
-            name="q"
-            type="search"
-            className="gc-search__input"
-            placeholder="Search for help"
-            aria-label="Search for help"
-          />
-        </form>
+        {helpAvailable ? (
+          <form
+            className="gc-search"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const input = e.currentTarget.elements.namedItem("q");
+              navigate({ space: "help", query: input?.value || "" });
+            }}
+          >
+            <Search className="gc-search__icon" />
+            <input
+              name="q"
+              type="search"
+              className="gc-search__input"
+              placeholder="Search for help"
+              aria-label="Search for help"
+            />
+          </form>
+        ) : null}
       </div>
     </>
   );

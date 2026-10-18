@@ -1,9 +1,6 @@
 "use client";
 
-// The config form renders straight from CHANNEL_KIND_META[kind].fields
-// (channels spec §3), so adding a field is a one-line change in constants.js.
-// Value fields sit in a Field grid; switches drop to a SettingsList underneath.
-// Saves through updateChannel; the editor owns optimistic state + toasts.
+// Config form rendered from CHANNEL_KIND_META[kind].fields (spec §3); the editor owns saving, validation and toasts.
 
 import { Plus, Trash2 } from "lucide-react";
 import { Button, Input } from "@geiger/ui";
@@ -77,8 +74,18 @@ function AccountsEditor({ field, value, onChange }) {
   );
 }
 
-export function ChannelConfigForm({ meta, config = {}, onChange }) {
+export function ChannelConfigForm({ meta, config = {}, errors = [], onChange }) {
   const set = (key) => (value) => onChange({ ...config, [key]: value });
+
+  // A blank required field shows inline and blocks the save; otherwise required fields say so up front.
+  const hintFor = (field) => {
+    if (errors.includes(field.key)) {
+      return (
+        <span className="text-red-400">Required — changes won&apos;t save until it&apos;s filled in.</span>
+      );
+    }
+    return field.hint ?? (field.required ? "Required." : undefined);
+  };
 
   const switches = meta.fields.filter((f) => f.type === "switch");
   const values = meta.fields.filter((f) => f.type !== "switch");
@@ -86,7 +93,12 @@ export function ChannelConfigForm({ meta, config = {}, onChange }) {
   const isWide = (field) => ["textarea", "accounts"].includes(field.type);
 
   const control = (field) => {
-    const shared = { placeholder: field.placeholder, "aria-label": field.label };
+    const shared = {
+      placeholder: field.placeholder,
+      "aria-label": field.label,
+      "aria-required": field.required || undefined,
+      "aria-invalid": errors.includes(field.key) || undefined,
+    };
 
     if (field.type === "textarea") {
       return (
@@ -161,7 +173,7 @@ export function ChannelConfigForm({ meta, config = {}, onChange }) {
             <Field
               key={field.key}
               label={field.label}
-              hint={field.hint}
+              hint={hintFor(field)}
               className={isWide(field) ? "sm:col-span-2" : undefined}
             >
               {control(field)}

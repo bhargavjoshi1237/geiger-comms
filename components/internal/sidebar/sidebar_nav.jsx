@@ -18,6 +18,7 @@ import {
   Building2,
   Tags,
   Workflow,
+  History,
   Zap,
   Route,
   Timer,
@@ -122,6 +123,8 @@ export const workspaceNav = [
     icon: Workflow,
     subItems: [
       { title: "Workflows", icon: Workflow }, // A — visual no-code builder, incl. triggers
+      { title: "Workflow Templates", icon: LayoutTemplate }, // starter gallery → opens in the builder
+      { title: "Run History", icon: History }, // one row per workflow execution
       { title: "Macros", icon: Zap }, // A — canned replies, with optional actions
       { title: "Routing Rules", icon: Route }, // A — incl. round robin
       { title: "SLA Policies", icon: Timer }, // A (Intercom gates to Expert)

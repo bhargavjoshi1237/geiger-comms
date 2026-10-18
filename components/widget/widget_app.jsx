@@ -1,19 +1,14 @@
 "use client";
 
-// The iframe app root (spec §9). Owns the handshake → boot → ready lifecycle,
-// the in-memory session, spaces routing and the realtime subscription. Tokens
-// never leave memory — nothing here is persisted.
-//
-// Visually it is the design's panel: `.gc-widget` holds the tokens, `.gc-panel`
-// is the card, and every space renders header → body → footer inside it. The
-// three-tab bar belongs to the panel, so a sub-screen (a thread, an article,
-// the composer) hides it and the panel reads as one task.
+// The iframe app root (spec §9): handshake → boot → ready, the in-memory session (§4.1), spaces routing, unread counts and realtime (§6).
+// Tokens live in memory only. The tab bar belongs to the panel, so a sub-screen (thread, article, composer) hides it.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { LogoLoading } from "@geiger/ui/logo-loading";
 import { createBridge } from "./bridge";
-import { createWidgetApi } from "./api_client";
-import { subscribeToConversation } from "./realtime";
+import { bootWidgetSession, createWidgetApi } from "./api_client";
+import { createRealtime } from "./realtime";
 import { HomeSpace } from "./home_space";
 import { AskSpace } from "./ask_space";
 import { MessagesSpace } from "./messages_space";
@@ -23,54 +18,118 @@ import { TicketsSpace } from "./tickets_space";
 import { OfflineMessageView } from "./offline_message";
 import {
   BookHeart,
-  BrandBubble,
+  BrandMark,
   Mail,
   MessageCircle,
+  Newspaper,
   ReconnectingBanner,
-  Spinner,
+  Ticket,
 } from "./widget_primitives";
-import { ProactivePopup } from "./proactive";
 
-// Next serves this app under basePath ("/comms" in prod), but fetch() is not
-// basePath-aware — a bare "/api/..." would miss the prefix and 404.
-const BASE = process.env.NEXT_PUBLIC_BASE_PATH || "";
-// A failed refresh re-boots; cap it so an unrecoverable session can't spin.
-const MAX_REBOOTS = 3;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
 const HOME_ROUTE = { space: "home" };
-const DEFAULT_CONFIG = {
-  name: "Northwind Help",
-  greeting: "Hi there. How can we help?",
-  officeHoursNote: "",
-  assistantName: "Aria",
-  assistantTagline: "Answers about your order, return or account in seconds.",
-  team: [],
-  teamOnline: true,
-  showAvatars: true,
-  spaces: { home: true, messages: true, help: true, news: true, tickets: true, ask: true },
-};
-const DEMO_PROACTIVE = {
-  id: "p1",
-  author: "Maya from Northwind",
-  subtitle: "Just now",
-  body: "Saw you looking at the returns policy. Want me to check whether your order is still inside the window?",
-  actions: [
-    { label: "Yes, check it", primary: true },
-    { label: "No thanks" },
-  ],
-};
+const FIRST_BOOT_ATTEMPTS = 4; // transient first-boot failures before the error screen
+const RETRY_BASE_MS = 2_000;
+const RETRY_MAX_MS = 60_000;
+const WATCH_LIMIT = 20; // most recent conversations listened on, so unread counts work while the panel is closed
+const FALLBACK_POLL_MS = 30_000; // re-sync cadence while realtime is unavailable
+const RESYNC_MIN_GAP_MS = 3_000;
+const LIST_DEBOUNCE_MS = 400;
+const MAX_PENDING = 20;
+const EMPTY_CONTENT = { help: null, news: null, tickets: null };
+const CORE_SPACES = new Set(["home", "messages"]);
 
-// Which tab root the current route belongs to. Sub-screens return null so the
-// nav hides; news and tickets keep the bar but light nothing up.
+// Boot statuses a retry cannot fix.
+const FATAL_BOOT = {
+  400: "Chat couldn't start on this page.",
+  401: "Your sign-in has expired. Refresh the page to keep chatting.",
+  403: "Chat isn't enabled for this site.",
+  404: "Chat isn't available right now.",
+};
+const TRANSIENT_BOOT = "We couldn't reach chat right now. Please try again shortly.";
+
+const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const pickText = (...values) => values.find((v) => typeof v === "string" && v.trim())?.trim() ?? "";
+
+// Server config → the flat view model every space reads; neutral defaults stand in for anything missing.
+export function normalizeConfig(raw) {
+  const c = isObject(raw) ? raw : {};
+  const a = isObject(c.appearance) ? c.appearance : {};
+  const assistant = isObject(c.assistant) ? c.assistant : {};
+  const logo = pickText(a.logoUrl, c.logoUrl);
+  return {
+    name: pickText(a.name, c.name) || "Support",
+    greeting: pickText(a.greeting, c.greeting) || "Hi there. How can we help?",
+    officeHoursNote: pickText(a.officeHoursNote, c.officeHoursNote),
+    backAt: pickText(a.backAt, c.backAt),
+    logoUrl: /^https:\/\//i.test(logo) ? logo : "",
+    // AI surfaces (Ask, hand-over copy) only appear when the server names an assistant.
+    assistantName: pickText(assistant.name, c.assistantName),
+    assistantTagline: pickText(assistant.tagline, c.assistantTagline),
+    team: Array.isArray(c.team) ? c.team.filter((p) => isObject(p) && pickText(p.name)).slice(0, 3) : [],
+    teamOnline: typeof c.teamOnline === "boolean" ? c.teamOnline : null,
+    showAvatars: a.showAvatars !== false,
+    spaces: isObject(c.spaces) ? c.spaces : {},
+  };
+}
+
+const spaceEnabled = (config, id) => config?.spaces?.[id] !== false;
+
+// A tab shows when its space is enabled and, for content spaces, a probe found something in it (spec §9).
+function tabVisible(config, content, id) {
+  if (!spaceEnabled(config, id)) return false;
+  return CORE_SPACES.has(id) || content[id] === true;
+}
+
+// What the panel renders: a disabled space falls back to Home; Ask without an assistant becomes a new message.
+function resolveRoute(route, config) {
+  if (route.space === "ask") {
+    return config.assistantName ? route : { space: "messages", compose: true, draft: route.query || "" };
+  }
+  return spaceEnabled(config, route.space) ? route : HOME_ROUTE;
+}
+
+// The tab a route belongs to; sub-screens return null so the nav hides.
 function tabForRoute(route) {
   if (route.space === "home") return "home";
-  if (route.space === "messages" && !route.conversationId && !route.newAbout && !route.newLabel) {
-    return "messages";
-  }
-  if (route.space === "help" && !route.articleId) return "help";
-  if (route.space === "news" && !route.postId) return "";
-  if (route.space === "tickets" && !route.ticketId) return "";
+  if (route.space === "messages") return route.conversationId || route.compose ? null : "messages";
+  if (route.space === "help") return route.articleId ? null : "help";
+  if (route.space === "news") return route.postId ? null : "news";
+  if (route.space === "tickets") return route.ticketId ? null : "tickets";
   return null;
+}
+
+const retryDelay = (failures) => Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.max(0, failures - 1));
+
+const sameIdentity = (a, b) =>
+  a?.appId === b?.appId && (a?.jwt || null) === (b?.jwt || null) && a?.anonymousId === b?.anonymousId;
+
+// The server's per-conversation unread counts (agent/AI replies since the visitor last read) are authoritative;
+// the thread the visitor has on screen always reads zero.
+function unreadFromRows(rows, readId) {
+  const map = {};
+  for (const row of rows) {
+    const n = typeof row.unreadCount === "number" && row.unreadCount > 0 ? Math.floor(row.unreadCount) : 0;
+    if (n && row.id !== readId) map[row.id] = n;
+  }
+  return map;
+}
+
+// POST /session (spec §4) → { ok, session } or { ok: false, status }; parentOrigin is the host origin the bridge verified.
+async function startSession(payload, parentOrigin) {
+  try {
+    const session = await bootWidgetSession({
+      appId: payload.appId,
+      jwt: payload.jwt,
+      anonymousId: payload.anonymousId,
+      parentOrigin,
+    });
+    return typeof session?.sessionToken === "string" ? { ok: true, session } : { ok: false, status: 0 };
+  } catch (e) {
+    return { ok: false, status: typeof e?.status === "number" ? e.status : 0 };
+  }
 }
 
 export function WidgetApp() {
@@ -78,33 +137,46 @@ export function WidgetApp() {
   const expectedParentOrigin = searchParams.get("parentOrigin") || "";
 
   const [phase, setPhase] = useState("waiting"); // waiting | booting | ready | error
-  const [config, setConfig] = useState(DEFAULT_CONFIG);
+  const [bootError, setBootError] = useState("");
+  const [retryable, setRetryable] = useState(false);
+  const [config, setConfig] = useState(() => normalizeConfig(null));
   const [contact, setContact] = useState(null);
   const [route, setRoute] = useState(HOME_ROUTE);
-  const [reconnecting, setReconnecting] = useState(false);
-  const [refreshSignal, setRefreshSignal] = useState(0);
-  const [bootError, setBootError] = useState("");
-  const [realtimeToken, setRealtimeToken] = useState(null);
-  const [proactive, setProactive] = useState(null);
-  const [lastAgent, setLastAgent] = useState(null);
-  const [unread, setUnreadCount] = useState(0);
-  const [theme, setTheme] = useState("dark");
-  // The host can hide the iframe without tearing it down; while hidden we stop
-  // the realtime subscription and any polling so a closed widget costs nothing.
+  const [epoch, setEpoch] = useState(0); // bumps on every successful boot so spaces re-fetch
+  const [sessionTrouble, setSessionTrouble] = useState(false);
+  const [liveStatus, setLiveStatus] = useState("off");
+  const [hadLive, setHadLive] = useState(false);
+  const [browserOffline, setBrowserOffline] = useState(false);
   const [visible, setVisible] = useState(true);
-  const [launcherState, setLauncherState] = useState(null);
+  const [convos, setConvos] = useState({ rows: null, failed: false });
+  const [unreadMap, setUnreadMap] = useState({});
+  const [threadTicks, setThreadTicks] = useState({});
+  const [syncTick, setSyncTick] = useState(0);
+  const [probeTick, setProbeTick] = useState(0);
+  const [content, setContent] = useState(EMPTY_CONTENT);
+  const [theme, setTheme] = useState("dark");
 
-  const tokensRef = useRef(null);
   const bridgeRef = useRef(null);
   const apiRef = useRef(null);
-  const queueRef = useRef([]);
+  const tokensRef = useRef(null);
+  const realtimeRef = useRef(null);
   const lastBootRef = useRef(null);
-  const unreadRef = useRef(0);
-  const rebootsRef = useRef(0);
-  const bootRef = useRef(null);
+  const bootSeqRef = useRef(0);
+  const bootingRef = useRef(false);
+  const failuresRef = useRef(0);
+  const retryTimerRef = useRef(null);
+  const listTimerRef = useRef(null);
+  const pendingRef = useRef([]);
+  const unreadRef = useRef({}); // mirror of unreadMap for diffing inside callbacks
+  const openIdRef = useRef(null);
+  const visibleRef = useRef(true);
+  const liveRef = useRef("off");
+  const lastResyncRef = useRef(0);
+  const lastUnreadSentRef = useRef(null);
+  // Latest callbacks for long-lived listeners (bridge, timers, realtime, API client).
+  const handlersRef = useRef({});
 
-  // The panel carries its own token set; follow the document's theme so the
-  // messenger doesn't sit dark inside a light page (or the reverse).
+  // The panel carries its own token set; follow the document's theme so it never sits dark inside a light page.
   useEffect(() => {
     const root = document.documentElement;
     const read = () => setTheme(root.classList.contains("dark") ? "dark" : "light");
@@ -114,260 +186,470 @@ export function WidgetApp() {
     return () => observer.disconnect();
   }, []);
 
-  const postToHost = useCallback(
-    (type, payload) => bridgeRef.current?.send(type, payload),
-    [],
+  const postToHost = useCallback((type, payload) => bridgeRef.current?.send(type, payload), []);
+  const getApi = useCallback(() => apiRef.current, []);
+
+  const clearRetry = useCallback(() => {
+    clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = null;
+  }, []);
+
+  // Every token pair (boot, and the API client's proactive refresh) lands here; realtime re-auths in place (spec §4.1).
+  const applyTokens = useCallback((tokens) => {
+    if (!isObject(tokens) || typeof tokens.sessionToken !== "string") return;
+    tokensRef.current = { ...(tokensRef.current || {}), ...tokens };
+    failuresRef.current = 0;
+    realtimeRef.current?.setToken(tokensRef.current.realtimeToken ?? null);
+  }, []);
+
+  const disposeApi = useCallback(() => {
+    apiRef.current?.dispose?.();
+    apiRef.current = null;
+  }, []);
+
+  // Drops every trace of the current session; in-flight boots and pending timers become no-ops.
+  const teardownSession = useCallback(() => {
+    bootSeqRef.current += 1;
+    bootingRef.current = false;
+    clearRetry();
+    clearTimeout(listTimerRef.current);
+    tokensRef.current = null;
+    disposeApi();
+    realtimeRef.current?.setToken(null);
+    unreadRef.current = {};
+  }, [clearRetry, disposeApi]);
+
+  const resetView = useCallback(() => {
+    setContact(null);
+    setRoute(HOME_ROUTE);
+    setConvos({ rows: null, failed: false });
+    unreadRef.current = {};
+    setUnreadMap({});
+    setThreadTicks({});
+    setContent(EMPTY_CONTENT);
+    setSessionTrouble(false);
+    setHadLive(false);
+    setLiveStatus("off");
+    liveRef.current = "off";
+  }, []);
+
+  // POST /session → in-memory tokens + config. `silent` keeps the current panel on screen (a re-boot after session loss).
+  const boot = useCallback(
+    async (payload, { silent = false } = {}) => {
+      if (!payload) return;
+      if (!bridgeRef.current?.confirmParent(payload.parentOrigin)) {
+        teardownSession();
+        setBootError("We couldn't verify the page hosting this chat.");
+        setRetryable(false);
+        setPhase("error");
+        return;
+      }
+      const seq = ++bootSeqRef.current;
+      clearRetry();
+      lastBootRef.current = payload;
+      bootingRef.current = true;
+      if (!silent) setPhase("booting");
+
+      const result = await startSession(payload, bridgeRef.current?.verifiedParentOrigin() ?? null);
+      if (seq !== bootSeqRef.current) return; // superseded by a newer boot, update or shutdown
+      bootingRef.current = false;
+
+      if (result.ok) {
+        const { session } = result;
+        // The API client binds to the session token it sees at construction, so tokens land first.
+        disposeApi();
+        tokensRef.current = null;
+        applyTokens({
+          sessionToken: session.sessionToken,
+          realtimeToken: session.realtimeToken ?? null,
+          expiresIn: session.expiresIn,
+          realtimeExpiresIn: session.realtimeExpiresIn ?? null,
+        });
+        apiRef.current = createWidgetApi({
+          getTokens: () => tokensRef.current || {},
+          onTokensRefreshed: (tokens) => handlersRef.current.applyTokens?.(tokens),
+          onRequestReboot: () => handlersRef.current.recover?.(),
+          onEvent: (event) => postToHost("event", { name: event?.name, meta: event?.meta ?? null }),
+        });
+        setConfig(normalizeConfig(session.config));
+        setContact(session.contact ?? null);
+        postToHost("visitor", { visitorId: session.visitorId ?? null });
+        setSessionTrouble(false);
+        setEpoch((n) => n + 1);
+        setPhase("ready");
+        return;
+      }
+
+      failuresRef.current += 1;
+      const fatal = FATAL_BOOT[result.status];
+      if (fatal) {
+        teardownSession();
+        setBootError(fatal);
+        setRetryable(result.status !== 401);
+        setPhase("error");
+        return;
+      }
+      if (silent) {
+        // The silent re-boot failed too: surface "reconnecting" and keep retrying with backoff (spec §4.1).
+        setSessionTrouble(true);
+      } else if (failuresRef.current >= FIRST_BOOT_ATTEMPTS) {
+        setBootError(TRANSIENT_BOOT);
+        setRetryable(true);
+        setPhase("error");
+        return;
+      }
+      retryTimerRef.current = setTimeout(() => {
+        retryTimerRef.current = null;
+        void handlersRef.current.boot?.(lastBootRef.current, { silent });
+      }, retryDelay(failuresRef.current));
+    },
+    [applyTokens, clearRetry, disposeApi, postToHost, teardownSession],
   );
 
-  const setUnread = useCallback(
-    (count, author = null) => {
-      let next;
-      if (typeof count === "function") {
-        next = Math.max(0, count(unreadRef.current) | 0);
-      } else {
-        next = Math.max(0, count | 0);
-      }
-      const changed = unreadRef.current !== next;
-      unreadRef.current = next;
-      setUnreadCount(next);
-      if (changed) postToHost("unreadCount", { count: next });
-      if (next > 0 && author) {
-        setLastAgent(author);
-        postToHost("launcher", { unreadReply: true, author });
-      }
+  // Session refused (a 401, or a refresh that could not land before expiry): one silent re-boot; its failure surfaces "reconnecting" (spec §4.1).
+  const recoverSession = useCallback(() => {
+    if (!lastBootRef.current || bootingRef.current || retryTimerRef.current) return;
+    tokensRef.current = null;
+    realtimeRef.current?.setToken(null);
+    void boot(lastBootRef.current, { silent: true });
+  }, [boot]);
+
+  const shutdown = useCallback(() => {
+    teardownSession();
+    lastBootRef.current = null;
+    pendingRef.current = [];
+    failuresRef.current = 0;
+    resetView();
+    setPhase("waiting");
+  }, [resetView, teardownSession]);
+
+  // A different identity gets a clean session; the server merges anonymous history on sign-in (spec §4.2).
+  const switchIdentity = useCallback(
+    (payload) => {
+      teardownSession();
+      failuresRef.current = 0;
+      resetView();
+      void boot(payload);
+    },
+    [boot, resetView, teardownSession],
+  );
+
+  // Host commands that need a session wait until one exists.
+  const runWithSession = useCallback((fn) => {
+    const api = apiRef.current;
+    if (api && tokensRef.current) fn(api);
+    else if (pendingRef.current.length < MAX_PENDING) pendingRef.current.push(fn);
+  }, []);
+
+  // Resume (tab visible, back online, realtime recovered, panel shown): re-fetch to close any gap (spec §6).
+  const requestResync = useCallback(({ probe = false } = {}) => {
+    const now = Date.now();
+    if (now - lastResyncRef.current < RESYNC_MIN_GAP_MS) return;
+    lastResyncRef.current = now;
+    setSyncTick((n) => n + 1);
+    if (probe) setProbeTick((n) => n + 1);
+  }, []);
+
+  const commitUnread = useCallback((next) => {
+    unreadRef.current = next;
+    setUnreadMap(next);
+  }, []);
+
+  // The list carries the authoritative unread counts; a count that grew lights the launcher's "<agent> replied" pill.
+  const loadConversations = useCallback(async () => {
+    const api = apiRef.current;
+    if (!api) return;
+    try {
+      const rows = await api.conversations();
+      if (apiRef.current !== api) return;
+      const list = Array.isArray(rows) ? rows.filter((r) => r && typeof r.id === "string") : [];
+      const next = unreadFromRows(list, visibleRef.current ? openIdRef.current : null);
+      const prev = unreadRef.current;
+      const grew = list.find((r) => (next[r.id] || 0) > (prev[r.id] || 0));
+      setConvos({ rows: list, failed: false });
+      commitUnread(next);
+      if (grew) postToHost("launcher", { unreadReply: true, author: grew.agentName || null });
+    } catch {
+      if (apiRef.current === api) setConvos((c) => (c.rows ? c : { rows: null, failed: true }));
+    }
+  }, [commitUnread, postToHost]);
+
+  const reloadConversations = useCallback(() => {
+    setConvos((c) => (c.failed ? { rows: null, failed: false } : c));
+    void loadConversations();
+  }, [loadConversations]);
+
+  const scheduleListReload = useCallback(() => {
+    clearTimeout(listTimerRef.current);
+    listTimerRef.current = setTimeout(() => {
+      listTimerRef.current = null;
+      void loadConversations();
+    }, LIST_DEBOUNCE_MS);
+  }, [loadConversations]);
+
+  // Content spaces show a tab only when they have something in them (spec §9).
+  const probeContent = useCallback(async () => {
+    const api = apiRef.current;
+    if (!api) return;
+    const has = (call) =>
+      Promise.resolve()
+        .then(call)
+        .then((rows) => Array.isArray(rows) && rows.length > 0)
+        .catch(() => null);
+    const [help, news, tickets] = await Promise.all([
+      has(() => api.articles?.("")),
+      has(() => api.news?.()),
+      has(() => api.tickets?.()),
+    ]);
+    if (apiRef.current !== api) return;
+    setContent((prev) => ({
+      help: help ?? prev.help,
+      news: news ?? prev.news,
+      tickets: tickets ?? prev.tickets,
+    }));
+  }, []);
+
+  // message.created (spec §6) carries no body: re-fetch the affected thread through the API, and the list for previews and unread.
+  const handleNotify = useCallback(
+    (envelope) => {
+      const id = envelope.conversationId;
+      setThreadTicks((t) => ({ ...t, [id]: (t[id] || 0) + 1 }));
+      scheduleListReload();
+    },
+    [scheduleListReload],
+  );
+
+  const handleStatus = useCallback(
+    (status) => {
+      const prev = liveRef.current;
+      liveRef.current = status;
+      setLiveStatus(status);
+      if (status !== "live") return;
+      setHadLive(true);
+      if (prev === "down") requestResync();
+    },
+    [requestResync],
+  );
+
+  // The visitor has the thread on screen: clear its unread count and tell the server.
+  const markSeen = useCallback(
+    (conversationId) => {
+      if (!conversationId) return;
+      const current = unreadRef.current;
+      if (current[conversationId]) commitUnread({ ...current, [conversationId]: 0 });
+      Promise.resolve(apiRef.current?.markRead?.(conversationId)).catch(() => {});
+    },
+    [commitUnread],
+  );
+
+  // Widget → host `userEmailSupplied` (spec §8), fired when the visitor gives us their email.
+  const onEmailSupplied = useCallback(
+    (email) => {
+      if (typeof email === "string" && email) postToHost("userEmailSupplied", { email });
     },
     [postToHost],
   );
 
-  function emitEvent(name, meta) {
-    postToHost("event", { name, meta });
-  }
-
-  const boot = useCallback(async (payload) => {
-    if (!payload?.appId || !payload?.anonymousId) return;
-    if (!bridgeRef.current?.confirmParent(payload.parentOrigin)) {
-      setBootError("We couldn't verify the page hosting this chat.");
-      setPhase("error");
-      return;
-    }
-    lastBootRef.current = payload;
-    setPhase("booting");
-    try {
-      const res = await fetch(`${BASE}/api/widget/session`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          appId: payload.appId,
-          jwt: payload.jwt || "",
-          anonymousId: payload.anonymousId,
-        }),
-      });
-      if (!res.ok) throw new Error(`session_${res.status}`);
-      const session = await res.json();
-      tokensRef.current = session;
-      setRealtimeToken(session.realtimeToken ?? null);
-      apiRef.current = createWidgetApi({
-        getTokens: () => tokensRef.current || {},
-        onTokensRefreshed: (tokens) => {
-          tokensRef.current = { ...tokensRef.current, ...tokens };
-          setRealtimeToken(tokens?.realtimeToken ?? null);
-        },
-        onEvent: (event) => {
-          emitEvent(event.name, event.meta);
-        },
-        onRequestReboot: () => {
-          tokensRef.current = null;
-          setRealtimeToken(null);
-          if (!lastBootRef.current || rebootsRef.current >= MAX_REBOOTS) {
-            setBootError("We couldn't reach chat right now. Please try again shortly.");
-            setPhase("error");
-            return;
+  // Payloads arrive already validated per type by the bridge.
+  const handleCommand = useCallback(
+    (type, payload) => {
+      switch (type) {
+        case "boot": {
+          const prev = lastBootRef.current;
+          // A repeat boot for the live (or still-booting) identity is a no-op.
+          if (prev && (apiRef.current || bootingRef.current) && sameIdentity(prev, payload)) break;
+          if (prev) switchIdentity(payload);
+          else {
+            failuresRef.current = 0;
+            void boot(payload);
           }
-          rebootsRef.current += 1;
-          setReconnecting(true);
-          void bootRef.current?.(lastBootRef.current);
-        },
-      });
-      setConfig({ ...DEFAULT_CONFIG, ...session.config });
-      setContact(session.contact);
-      postToHost("visitor", { visitorId: session.visitorId ?? null });
-      setReconnecting(false);
-      setPhase("ready");
-    } catch {
-      setBootError("We couldn't reach chat right now. Please try again shortly.");
-      setPhase("error");
-    }
-  }, [postToHost]);
+          break;
+        }
+        case "update": {
+          const prev = lastBootRef.current;
+          if (!payload.hasJwt || !prev || (prev.jwt || null) === payload.jwt) break;
+          switchIdentity({ ...prev, jwt: payload.jwt, email: payload.email ?? prev.email });
+          break;
+        }
+        case "shutdown":
+          shutdown();
+          break;
+        case "show":
+          setVisible(true);
+          requestResync({ probe: true });
+          break;
+        case "hide":
+          setVisible(false);
+          break;
+        case "showSpace":
+          setRoute({ space: payload.name });
+          break;
+        case "showAsk":
+          setRoute({ space: "ask", query: payload.text });
+          break;
+        case "showArticle":
+          setRoute({ space: "help", articleId: payload.id });
+          break;
+        case "showNews":
+          setRoute(payload.id ? { space: "news", postId: payload.id } : { space: "news" });
+          break;
+        case "showConversation":
+          setRoute({ space: "messages", conversationId: payload.id });
+          break;
+        case "showNewMessage":
+          setRoute({ space: "messages", compose: true, draft: payload.text });
+          break;
+        case "showTicket":
+          setRoute({ space: "tickets", ticketId: payload.id });
+          break;
+        case "trackEvent":
+          // Straight to /events: the host already fired its own onEvent listeners for this call.
+          runWithSession((api) =>
+            Promise.resolve(
+              api.request("/events", {
+                method: "POST",
+                body: JSON.stringify({ name: payload.name, meta: payload.meta }),
+              }),
+            ).catch(() => null),
+          );
+          break;
+        default:
+          break; // "launcher" echoes need nothing from the panel
+      }
+    },
+    [boot, requestResync, runWithSession, shutdown, switchIdentity],
+  );
 
   useEffect(() => {
-    bootRef.current = boot;
-  }, [boot]);
+    handlersRef.current = {
+      boot,
+      recover: recoverSession,
+      applyTokens,
+      notify: handleNotify,
+      status: handleStatus,
+      command: handleCommand,
+    };
+  });
 
-  // Handshake: announce readiness; every inbound envelope is origin-checked.
+  // Handshake: announce readiness; every inbound envelope is origin-, source- and schema-checked by the bridge.
   useEffect(() => {
     const bridge = createBridge({
       expectedParentOrigin,
-      onMessage: (type, payload) => {
-        switch (type) {
-          case "boot":
-            void boot(payload);
-            break;
-          case "show":
-            setVisible(true);
-            break;
-          case "hide":
-            setVisible(false);
-            break;
-          // Echo of the host's setLauncherState(); keeps the messenger's idea of
-          // the launcher (label, badge, who replied) in sync with the host page.
-          case "launcher": {
-            const p = payload && typeof payload === "object" ? payload : {};
-            setLauncherState((prev) => ({ ...(prev || {}), ...p }));
-            if (typeof p.author === "string" && p.author) setLastAgent(p.author);
-            break;
-          }
-          case "update":
-            if (payload && typeof payload === "object" && typeof payload.jwt === "string") {
-              tokensRef.current = null;
-              setPhase("waiting");
-              void boot({ ...(lastBootRef.current || payload), jwt: payload.jwt });
-            }
-            break;
-          case "showSpace":
-            setRoute({ space: String(payload?.name || payload || "home") });
-            break;
-          case "showAsk":
-            setRoute({ space: "ask", query: String(payload?.text || payload || "") });
-            break;
-          case "showArticle":
-            setRoute({ space: "help", articleId: String(payload?.id || payload || "") });
-            break;
-          case "showNews": {
-            const newsId = payload?.id ?? (typeof payload === "string" ? payload : "");
-            setRoute({ space: "news", postId: newsId ? String(newsId) : undefined });
-            break;
-          }
-          case "showConversation":
-            setRoute({ space: "messages", conversationId: String(payload?.id || payload || "") });
-            break;
-          case "showNewMessage": {
-            const text = typeof payload === "string" ? payload : String(payload?.text || "");
-            setRoute({ space: "messages", draft: text });
-            break;
-          }
-          case "showTicket":
-            setRoute({ space: "tickets", ticketId: String(payload?.id || payload || "") });
-            break;
-          case "trackEvent":
-            if (payload?.name) apiRef.current?.trackEvent(String(payload.name), payload.meta);
-            break;
-          case "shutdown":
-            tokensRef.current = null;
-            apiRef.current = null;
-            setContact(null);
-            setRoute(HOME_ROUTE);
-            setProactive(null);
-            setPhase("waiting");
-            break;
-          default:
-            break;
-        }
-      },
+      onMessage: (type, payload) => handlersRef.current.command?.(type, payload),
     });
     bridgeRef.current = bridge;
     bridge.send("ready");
-    return () => bridge.close();
-  }, [expectedParentOrigin, boot]);
+    return () => {
+      bridge.close();
+      if (bridgeRef.current === bridge) bridgeRef.current = null;
+    };
+  }, [expectedParentOrigin]);
 
-  const navigate = useCallback((nextRoute) => setRoute(nextRoute), []);
+  useEffect(() => teardownSession, [teardownSession]);
 
-  // Commands that arrive before the session exists wait in a queue.
-  const enqueueCommand = useCallback(
-    (fn) => {
-      if (phase === "ready") fn();
-      else queueRef.current.push(fn);
-    },
-    [phase],
-  );
+  // Commands queued before the session existed run once it does.
+  useEffect(() => {
+    if (phase !== "ready" || !apiRef.current) return;
+    const api = apiRef.current;
+    const queued = pendingRef.current;
+    pendingRef.current = [];
+    queued.forEach((fn) => fn(api));
+  }, [phase, epoch]);
+
+  // One realtime socket per session; it stays up while the panel is hidden so the launcher badge keeps counting.
+  useEffect(() => {
+    if (phase !== "ready") return undefined;
+    const rt = createRealtime({
+      url: SUPABASE_URL,
+      apiKey: SUPABASE_ANON_KEY,
+      onNotify: (envelope) => handlersRef.current.notify?.(envelope),
+      onStatus: (status) => handlersRef.current.status?.(status),
+    });
+    realtimeRef.current = rt;
+    rt.setToken(tokensRef.current?.realtimeToken ?? null);
+    return () => {
+      rt.close();
+      if (realtimeRef.current === rt) realtimeRef.current = null;
+    };
+  }, [phase, epoch]);
+
+  const viewRoute = resolveRoute(route, config);
+  const openConversationId =
+    viewRoute.space === "messages" && viewRoute.conversationId ? viewRoute.conversationId : null;
+
+  // Listen on the open thread plus the most recent conversations; a string key keeps the effect from churning.
+  const watchIds = openConversationId ? [openConversationId] : [];
+  for (const row of convos.rows ?? []) {
+    if (watchIds.length > WATCH_LIMIT) break;
+    if (!watchIds.includes(row.id)) watchIds.push(row.id);
+  }
+  const watchKey = watchIds.join(",");
+
+  useEffect(() => {
+    realtimeRef.current?.watch(watchKey ? watchKey.split(",") : []);
+  }, [watchKey, phase, epoch]);
+
+  useEffect(() => {
+    openIdRef.current = openConversationId;
+    visibleRef.current = visible;
+  }, [openConversationId, visible]);
 
   useEffect(() => {
     if (phase !== "ready") return;
-    const queued = queueRef.current;
-    queueRef.current = [];
-    queued.forEach((fn) => fn());
-  }, [phase]);
+    void loadConversations();
+  }, [phase, epoch, syncTick, loadConversations]);
 
-  // Surface a proactive popup on first ready (demo mode).
   useEffect(() => {
-    if (phase !== "ready" || !visible) return;
-    const t = setTimeout(() => setProactive(DEMO_PROACTIVE), 8_000);
-    return () => clearTimeout(t);
-  }, [phase, visible]);
+    if (phase !== "ready") return;
+    void probeContent();
+  }, [phase, epoch, probeTick, probeContent]);
 
-  const openConversationId =
-    route.space === "messages" && route.conversationId ? route.conversationId : null;
-  useEffect(() => {
-    if (phase !== "ready" || !visible || !openConversationId || !realtimeToken) return undefined;
-    return subscribeToConversation({
-      url: process.env.NEXT_PUBLIC_SUPABASE_URL,
-      realtimeToken,
-      conversationId: openConversationId,
-      onNotify: (status) => {
-        if (status?.online) setReconnecting(false);
-        else if (status?.offline) setReconnecting(true);
-        setRefreshSignal((n) => n + 1);
-        // While a conversation is open the thread is read; otherwise count.
-        setUnread((u) => u + 1, lastAgent);
-      },
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, visible, openConversationId, realtimeToken]);
-
-  const spaceProps = useMemo(
-    () => ({
-      getApi: () => apiRef.current,
-      config,
-      contact,
-      route,
-      navigate,
-      enqueueCommand,
-      reconnecting,
-      refreshSignal,
-      onUnread: setUnread,
-      postToHost,
-      lastAgent,
-      visible,
-      launcherState,
-      onProactive: (msg) => {
-        setProactive(msg);
-        if (msg?.author) setLastAgent(msg.author);
-      },
-    }),
-    [
-      config,
-      contact,
-      route,
-      navigate,
-      enqueueCommand,
-      reconnecting,
-      refreshSignal,
-      setUnread,
-      postToHost,
-      lastAgent,
-      visible,
-      launcherState,
-    ],
+  // Unread total → host, which drives the launcher badge and onUnreadCountChange (spec §9.1).
+  const unreadTotal = useMemo(
+    () => Object.values(unreadMap).reduce((sum, n) => sum + (n > 0 ? n : 0), 0),
+    [unreadMap],
   );
+  useEffect(() => {
+    if (lastUnreadSentRef.current === unreadTotal) return;
+    lastUnreadSentRef.current = unreadTotal;
+    postToHost("unreadCount", { count: unreadTotal });
+    if (unreadTotal === 0) postToHost("launcher", { unreadReply: false });
+  }, [unreadTotal, postToHost]);
+
+  // Offline/resume are first-class (spec §9): flag offline, re-sync when the tab or the network comes back.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") requestResync({ probe: true });
+    };
+    const onOnline = () => {
+      setBrowserOffline(false);
+      requestResync({ probe: true });
+    };
+    const onOffline = () => setBrowserOffline(true);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, [requestResync]);
+
+  // Without a live socket (not configured, or never authorised) an open panel re-syncs on a slow poll instead.
+  const realtimeHealthy = liveStatus === "live" || liveStatus === "idle";
+  useEffect(() => {
+    if (phase !== "ready" || !visible || realtimeHealthy) return undefined;
+    const timer = setInterval(() => setSyncTick((n) => n + 1), FALLBACK_POLL_MS);
+    return () => clearInterval(timer);
+  }, [phase, visible, realtimeHealthy]);
 
   if (phase === "waiting" || phase === "booting") {
     return (
       <Shell theme={theme}>
         <div className="gc-boot">
-          <span className="gc-boot__mark" aria-hidden="true">
-            <BrandBubble size={26} />
-          </span>
-          <Spinner />
-          <p>{phase === "waiting" ? "Starting chat…" : "Signing you in…"}</p>
+          <LogoLoading size={64} aria-label="Starting chat" />
+          <p className="gc-boot__label">{phase === "waiting" ? "Starting chat" : "Signing you in"}</p>
         </div>
       </Shell>
     );
@@ -376,60 +658,89 @@ export function WidgetApp() {
   if (phase === "error") {
     return (
       <Shell theme={theme}>
-        <div className="gc-boot">
+        <div className="gc-boot" role="alert">
           <span className="gc-boot__mark" aria-hidden="true">
-            <BrandBubble size={26} />
+            <BrandMark size={24} />
           </span>
           <p>{bootError}</p>
+          {retryable ? (
+            <button
+              type="button"
+              className="gc-outlinebtn"
+              onClick={() => {
+                failuresRef.current = 0;
+                void boot(lastBootRef.current);
+              }}
+            >
+              Try again
+            </button>
+          ) : null}
         </div>
       </Shell>
     );
   }
 
+  const reconnecting = browserOffline || sessionTrouble || (liveStatus === "down" && hadLive);
   // Team away: the panel opens on the "leave a message" screen instead of home.
-  const away = config?.teamOnline === false && route.space === "home";
-  const activeTab = away ? null : tabForRoute(route);
+  const away = config.teamOnline === false && viewRoute.space === "home";
+  const activeTab = away ? null : tabForRoute(viewRoute);
+  const tabs = TABS.filter((t) => tabVisible(config, content, t.id));
+
+  const spaceProps = {
+    getApi,
+    config,
+    contact,
+    route: viewRoute,
+    navigate: setRoute,
+    postToHost,
+    visible,
+    sessionKey: epoch,
+    syncTick,
+    content,
+    conversations: convos.rows,
+    conversationsFailed: convos.failed,
+    reloadConversations,
+    unreadMap,
+    threadTicks,
+    onSeen: markSeen,
+    onEmailSupplied,
+  };
 
   return (
     <Shell theme={theme}>
       <div className="gc-panel" role="dialog" aria-label="Messenger">
-        <ReconnectingBanner visible={reconnecting} />
+        <ReconnectingBanner
+          visible={reconnecting}
+          label={browserOffline ? "You're offline. Waiting for a connection…" : "Reconnecting…"}
+        />
 
         {away ? (
           <OfflineMessageView
+            getApi={getApi}
             config={config}
             contact={contact}
-            onAsk={() => navigate({ space: "ask" })}
+            onAsk={config.assistantName ? () => setRoute({ space: "ask" }) : null}
             onClose={() => postToHost("close")}
+            onEmailSupplied={onEmailSupplied}
           />
-        ) : route.space === "ask" ? (
+        ) : viewRoute.space === "ask" ? (
           <AskSpace {...spaceProps} />
-        ) : route.space === "messages" ? (
+        ) : viewRoute.space === "messages" ? (
           <MessagesSpace {...spaceProps} />
-        ) : route.space === "help" ? (
+        ) : viewRoute.space === "help" ? (
           <HelpSpace {...spaceProps} />
-        ) : route.space === "news" ? (
+        ) : viewRoute.space === "news" ? (
           <NewsSpace {...spaceProps} />
-        ) : route.space === "tickets" ? (
+        ) : viewRoute.space === "tickets" ? (
           <TicketsSpace {...spaceProps} />
         ) : (
           <HomeSpace {...spaceProps} />
         )}
 
         {activeTab === null ? null : (
-          <TabBar active={activeTab} unread={unread} config={config} onChange={navigate} />
+          <TabBar tabs={tabs} active={activeTab} unread={unreadTotal} onChange={setRoute} />
         )}
       </div>
-
-      <ProactivePopup
-        message={proactive}
-        onDismiss={() => setProactive(null)}
-        onReply={(text) => {
-          apiRef.current?.trackEvent?.("proactive:replied", { id: proactive?.id, text });
-          setRoute({ space: "messages", newAbout: "order", newLabel: "An order", draft: text });
-          setProactive(null);
-        }}
-      />
     </Shell>
   );
 }
@@ -443,16 +754,17 @@ function Shell({ theme, children }) {
   );
 }
 
+// Intercom's space set (spec §9); which of them appear is decided per session.
 const TABS = [
   { id: "home", label: "Home", Icon: MessageCircle },
   { id: "messages", label: "Messages", Icon: Mail },
   { id: "help", label: "Help", Icon: BookHeart },
+  { id: "news", label: "News", Icon: Newspaper },
+  { id: "tickets", label: "Tickets", Icon: Ticket },
 ];
 
-// Home · Messages · Help. A space the config has disabled drops out; fewer than
-// two tabs means there is nothing to switch between, so the bar hides.
-function TabBar({ active, unread = 0, config, onChange }) {
-  const tabs = TABS.filter((t) => config?.spaces?.[t.id] !== false);
+// Fewer than two tabs means there is nothing to switch between, so the bar hides.
+function TabBar({ tabs, active, unread = 0, onChange }) {
   if (tabs.length < 2) return null;
 
   return (
@@ -473,13 +785,15 @@ function TabBar({ active, unread = 0, config, onChange }) {
             aria-selected={selected}
             onClick={() => onChange({ space: id })}
           >
-            <Icon />
+            <span className="gc-tab__icon">
+              <Icon />
+              {badge ? (
+                <span className="gc-tab__badge" aria-hidden="true">
+                  {unread > 99 ? "99+" : unread}
+                </span>
+              ) : null}
+            </span>
             <span>{label}</span>
-            {badge ? (
-              <span className="gc-tab__badge" aria-hidden="true">
-                {unread}
-              </span>
-            ) : null}
             {badge ? <span className="gc-sr">, {unread} unread</span> : null}
           </button>
         );

@@ -1,7 +1,7 @@
 "use client";
 
-// Create a conversation from scratch (spec §4.2): a subject, a contact, a
-// channel and an optional first message. InboxShell owns the create.
+// Create a conversation from scratch (spec §4.2): subject, contact (linked to comms.contacts), channel and an optional first message.
+// Picking a connected channel sets channel_id plus the matching display kind (Channels spec §2.1). InboxShell owns the create.
 
 import { useState } from "react";
 import {
@@ -15,43 +15,57 @@ import {
   Input,
   Textarea,
 } from "@geiger/ui";
+import { Loader2 } from "lucide-react";
 import { Field } from "@/components/internal/shared/screen_kit";
-import { CHANNEL_FILTER_OPTIONS } from "./constants";
+import { CHANNEL_FILTER_OPTIONS, displayChannelFor } from "./constants";
 
 const EMPTY_DRAFT = {
   subject: "",
   contactName: "",
   contactEmail: "",
-  channel: "Email",
+  channelChoice: "", // "ch:<channelId>" | "kind:<display text>"; "" = default
   body: "",
 };
 
-export function NewConversationDialog({ open, onOpenChange, onCreate }) {
+const SELECT_CLASS =
+  "h-9 w-full rounded-md border border-border bg-surface-card px-3 text-sm text-foreground outline-none transition-colors focus-visible:border-border-strong focus-visible:ring-2 focus-visible:ring-border";
+
+export function NewConversationDialog({ open, onOpenChange, onCreate, channels = [] }) {
   const [draft, setDraft] = useState(EMPTY_DRAFT);
   const [busy, setBusy] = useState(false);
   const set = (key) => (value) => setDraft((d) => ({ ...d, [key]: value }));
 
-  function reset() {
+  // Default to the first connected channel, else the plain Email kind.
+  const connected = channels.filter((c) => c.status === "connected");
+  const defaultChoice = connected[0] ? `ch:${connected[0].id}` : channels[0] ? `ch:${channels[0].id}` : "kind:Email";
+  const choice = draft.channelChoice || defaultChoice;
+
+  function resolveChannel() {
+    if (choice.startsWith("ch:")) {
+      const row = channels.find((c) => c.id === choice.slice(3));
+      if (row) return { channelId: row.id, channel: displayChannelFor(row) };
+    }
+    return { channelId: null, channel: choice.startsWith("kind:") ? choice.slice(5) : "Email" };
+  }
+
+  function close() {
     setDraft(EMPTY_DRAFT);
     setBusy(false);
+    onOpenChange(false);
   }
 
   async function create() {
     if (!draft.subject.trim() || !draft.contactName.trim()) return;
     setBusy(true);
-    const created = await onCreate?.(draft);
-    if (created) {
-      reset();
-      onOpenChange(false);
-    } else {
-      setBusy(false);
-    }
+    const created = await onCreate?.({ ...draft, ...resolveChannel() });
+    if (created) close();
+    else setBusy(false);
   }
 
-  const valid = draft.subject.trim() && draft.contactName.trim();
+  const valid = Boolean(draft.subject.trim() && draft.contactName.trim());
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New conversation</DialogTitle>
@@ -77,7 +91,7 @@ export function NewConversationDialog({ open, onOpenChange, onCreate }) {
                 placeholder="Maya Chen"
               />
             </Field>
-            <Field label="Contact email" htmlFor="nc-email" hint="Optional">
+            <Field label="Contact email" htmlFor="nc-email" hint="Optional — reuses an existing contact with this email.">
               <Input
                 id="nc-email"
                 type="email"
@@ -87,18 +101,34 @@ export function NewConversationDialog({ open, onOpenChange, onCreate }) {
               />
             </Field>
           </div>
-          <Field label="Channel" htmlFor="nc-channel">
+          <Field
+            label="Channel"
+            htmlFor="nc-channel"
+            hint={channels.length === 0 ? "No connected channels yet — pick a channel type." : undefined}
+          >
             <select
               id="nc-channel"
-              value={draft.channel}
-              onChange={(e) => set("channel")(e.target.value)}
-              className="h-9 w-full rounded-md border border-border bg-surface-card px-3 text-sm text-foreground outline-none transition-colors focus-visible:border-border-strong focus-visible:ring-2 focus-visible:ring-border"
+              value={choice}
+              onChange={(e) => set("channelChoice")(e.target.value)}
+              className={SELECT_CLASS}
             >
-              {CHANNEL_FILTER_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
+              {channels.length > 0 ? (
+                <optgroup label="Connected channels">
+                  {channels.map((c) => (
+                    <option key={c.id} value={`ch:${c.id}`}>
+                      {(c.name || displayChannelFor(c)) + ` · ${displayChannelFor(c)}`}
+                      {c.status !== "connected" ? " (not connected)" : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+              <optgroup label={channels.length > 0 ? "Without a connected channel" : "Channel type"}>
+                {CHANNEL_FILTER_OPTIONS.map((option) => (
+                  <option key={option.value} value={`kind:${option.value}`}>
+                    {option.label}
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </Field>
           <Field label="First message" htmlFor="nc-body" hint="Optional — sent as the customer.">
@@ -113,10 +143,11 @@ export function NewConversationDialog({ open, onOpenChange, onCreate }) {
           </Field>
         </div>
         <DialogFooter>
-          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="ghost" onClick={close}>
             Cancel
           </Button>
-          <Button type="button" onClick={() => void create()} disabled={!valid || busy}>
+          <Button type="button" className="bg-primary" onClick={() => void create()} disabled={!valid || busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             Create
           </Button>
         </DialogFooter>

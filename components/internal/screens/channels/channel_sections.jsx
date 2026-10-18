@@ -1,18 +1,17 @@
 "use client";
 
-// Section nav + bodies for the channel editor (channels spec §5.1). Mirrors the
-// events editor: NAV_GROUPS drives the right-hand nav, SECTIONS maps a key to
-// its body. Messenger-only sections hide themselves through showIf.
+// Channel editor nav + section bodies (spec §5.1); Messenger-only sections hide through showIf.
 
 import {
   Code,
   Eye,
   LayoutDashboard,
+  Radio,
   ShieldAlert,
   SlidersHorizontal,
   Trash2,
 } from "lucide-react";
-import { Button, Input } from "@geiger/ui";
+import { Badge, Button, Input } from "@geiger/ui";
 import {
   Field,
   SectionCard,
@@ -21,10 +20,17 @@ import {
   StatGrid,
   StatusPill,
 } from "@/components/internal/shared/screen_kit";
-import { CHANNEL_STATUS_MAP, CONNECT_DISCLOSURE, formatDate } from "./constants";
+import {
+  CHANNEL_STATUS_MAP,
+  CONNECT_DISCLOSURE,
+  LIVE_NOTE,
+  formatDate,
+  isSimulated,
+} from "./constants";
 import { ChannelConfigForm } from "./channel_config_form";
 import { InstallSection } from "./install_section";
 import { MessengerPreview } from "./messenger_preview";
+import { SimulatedBadge } from "./simulated_badge";
 
 const isMessenger = (channel) => channel?.kind === "messenger";
 
@@ -85,8 +91,9 @@ export const NAV_GROUPS = [
 ];
 
 function OverviewSection({ channel, meta, conversationCount }) {
+  const simulated = isSimulated(channel);
   const stats = [
-    { label: "Conversations", value: String(conversationCount ?? 0), hint: "Routed through this channel" },
+    { label: "Conversations", value: String(conversationCount ?? 0), hint: "Linked to this channel" },
     { label: "Status", value: CHANNEL_STATUS_MAP[channel.status]?.label || channel.status },
     { label: "Created", value: formatDate(channel.createdAt) || "—" },
     { label: "Last updated", value: formatDate(channel.updatedAt) || "—" },
@@ -103,12 +110,17 @@ function OverviewSection({ channel, meta, conversationCount }) {
             control={<StatusPill status={channel.status} map={CHANNEL_STATUS_MAP} />}
           />
           <SettingRow
-            title="Simulated"
-            description={CONNECT_DISCLOSURE}
+            title={simulated ? "Simulated connection" : "Live connection"}
+            description={simulated ? CONNECT_DISCLOSURE : LIVE_NOTE}
             control={
-              <span className="rounded-full border border-border bg-surface-hover px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                {channel.simulated === false ? "Live" : "Simulated"}
-              </span>
+              simulated ? (
+                <SimulatedBadge channel={channel} />
+              ) : (
+                <Badge variant="success">
+                  <Radio aria-hidden="true" />
+                  Live
+                </Badge>
+              )
             }
           />
         </SettingsList>
@@ -117,25 +129,41 @@ function OverviewSection({ channel, meta, conversationCount }) {
   );
 }
 
-function ConfigurationSection({ channel, meta, config, onName, onConfig }) {
+function ConfigurationSection({ channel, meta, config, errors = [], onName, onConfig }) {
+  const nameMissing = errors.includes("name");
   return (
     <div className="space-y-6">
       <SectionCard title="Channel">
-        <Field label="Name" htmlFor="channel-name" hint="Shown in the inbox and on conversation rows.">
+        <Field
+          label="Name"
+          htmlFor="channel-name"
+          hint={
+            nameMissing ? (
+              <span className="text-red-400">Required — changes won&apos;t save until it&apos;s filled in.</span>
+            ) : (
+              "Shown in the inbox and on conversation rows."
+            )
+          }
+        >
           <Input
             id="channel-name"
             value={channel.name}
             onChange={(e) => onName(e.target.value)}
             placeholder={meta.label}
+            aria-invalid={nameMissing || undefined}
             className="h-9 sm:max-w-sm"
           />
         </Field>
       </SectionCard>
       <SectionCard
         title={`${meta.label} settings`}
-        description="Changes save automatically."
+        description={
+          isSimulated(channel)
+            ? "Changes save automatically. Stored only — nothing is sent to the provider."
+            : "Changes save automatically."
+        }
       >
-        <ChannelConfigForm meta={meta} config={config} onChange={onConfig} />
+        <ChannelConfigForm meta={meta} config={config} errors={errors} onChange={onConfig} />
       </SectionCard>
     </div>
   );
@@ -156,6 +184,16 @@ function InstallSectionBody({ channel }) {
   return <InstallSection channel={channel} />;
 }
 
+// Status copy per (simulated, connected): simulated rows never claim traffic; a disconnected Messenger stops its widget.
+function connectionCopy(simulated, connected) {
+  if (simulated) {
+    return `Marked as ${connected ? "connected" : "disconnected"} for your records. Simulated — nothing is received from or sent to the provider.`;
+  }
+  return connected
+    ? "Conversations from your installed widget arrive in your inbox."
+    : "Disconnected. Your installed widget stops loading until you reconnect.";
+}
+
 function AdvancedSection({ channel, meta, onStatus, onDelete }) {
   const connected = channel.status === "connected";
   return (
@@ -164,11 +202,7 @@ function AdvancedSection({ channel, meta, onStatus, onDelete }) {
         <SettingsList>
           <SettingRow
             title="Connected"
-            description={
-              connected
-                ? "Conversations route into your inbox from this channel."
-                : "Nothing routes in while this channel is disconnected."
-            }
+            description={connectionCopy(isSimulated(channel), connected)}
             checked={connected}
             onCheckedChange={(next) => onStatus(next ? "connected" : "disconnected")}
           />
@@ -179,11 +213,7 @@ function AdvancedSection({ channel, meta, onStatus, onDelete }) {
         title="Danger zone"
         description={`Deleting removes this ${meta.label.toLowerCase()} channel from the workspace. Existing conversations keep their history.`}
       >
-        <Button
-          type="button"
-          className="bg-red-500/90 text-white hover:bg-red-500"
-          onClick={onDelete}
-        >
+        <Button type="button" variant="destructive" onClick={onDelete}>
           <Trash2 className="h-4 w-4" /> Delete channel
         </Button>
       </SectionCard>

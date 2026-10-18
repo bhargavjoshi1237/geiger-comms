@@ -1,11 +1,10 @@
-// POST /api/widget/conversations/:id/rating — record a post-chat CSAT score and
-// optionally close the conversation. Ownership always comes from the
-// session token; the conversation id is only used for routing.
+// POST /api/widget/conversations/:id/rating — record a post-chat CSAT score { score: 1-5, comment? }.
+// Ownership comes from the session token; the id only routes. The conversation's status is the workspace's, never changed here.
 
 import { errorResponse, jsonResponse, readJsonBody } from "@/lib/widget/respond";
 import { requirePrincipal } from "@/lib/widget/auth";
 import { isWidgetApiConfigured } from "@/lib/widget/service";
-import { rateLimit } from "@/lib/widget/ratelimit";
+import { ownerKey, rateLimitAll } from "@/lib/widget/ratelimit";
 import { rateConversation } from "@/lib/widget/data";
 
 export const runtime = "nodejs";
@@ -16,18 +15,21 @@ export async function POST(request, { params }) {
   const principal = await requirePrincipal(request);
   if (!principal) return errorResponse(401, "invalid_token");
 
-  if (!rateLimit(`rate:${principal.sid}`, 20, 60_000)) {
-    return errorResponse(429, "rate_limited");
-  }
+  const allowed = rateLimitAll([
+    [`rate:sid:${principal.sid}`, 20, 60_000],
+    [`rate:owner:${ownerKey(principal)}`, 20, 60_000],
+  ]);
+  if (!allowed) return errorResponse(429, "rate_limited");
 
   const body = (await readJsonBody(request)) ?? {};
   const score = Number(body.score);
-  if (!Number.isFinite(score) || score < 1 || score > 5) {
+  if (!Number.isInteger(score) || score < 1 || score > 5) {
     return errorResponse(400, "bad_score");
   }
   const comment = typeof body.comment === "string" ? body.comment.slice(0, 1000) : "";
 
-  const ok = await rateConversation(params.id, principal, { score, comment });
+  const { id } = await params;
+  const ok = await rateConversation(id, principal, { score, comment });
   if (!ok) return errorResponse(404, "not_found");
   return jsonResponse({ ok: true });
 }

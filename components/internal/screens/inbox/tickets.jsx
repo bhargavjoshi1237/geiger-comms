@@ -1,15 +1,11 @@
 "use client";
 
-// Tickets — one queue over comms.tickets with type / state filters and search
-// (spec §6). Follows the suite list pattern: header + create, KPI bar, toolbar
-// filters, a DataTable and pagination. Selecting a row opens the ticket in the
-// URL (?ticket=<id>) and swaps to the full-page editor.
+// Tickets (inbox spec §6): one queue over comms.tickets with type / state / assignee filters and search. Row click opens the linked conversation; trackers (and unlinked tickets) open the editor (?ticket=<id>).
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   CheckCircle2,
-  Loader2,
   MessagesSquare,
   Pencil,
   Plus,
@@ -26,6 +22,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  LogoLoading,
 } from "@geiger/ui";
 import { MainScreenWrapper } from "@/components/internal/shared/screen_wrappers";
 import {
@@ -48,8 +45,10 @@ import {
   createTicket,
   listTickets,
   softDeleteTicket,
+  ticketConversationIds,
   updateTicket,
 } from "@/lib/supabase/tickets";
+import { getCurrentTeammate, listTeammates } from "@/lib/supabase/teammates";
 import { getUser } from "@/lib/supabase/user";
 import {
   TICKET_STATE_FILTER_OPTIONS,
@@ -62,6 +61,14 @@ import {
 import { TicketDialog } from "./ticket_dialog";
 import { TicketDetailScreen } from "./ticket_detail";
 
+// The conversation a row click should open: the origin thread, else a sole link. Trackers always open their editor.
+function conversationTarget(ticket) {
+  if (ticket.type === "tracker") return null;
+  if (ticket.conversationId) return ticket.conversationId;
+  const ids = ticketConversationIds(ticket);
+  return ids.length === 1 ? ids[0] : null;
+}
+
 export function TicketsScreen() {
   const { projectId } = useOptionalProject() ?? {};
   const { ticketId, openTicket, closeTicket, openConversationInTab } =
@@ -69,18 +76,28 @@ export function TicketsScreen() {
 
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [teammates, setTeammates] = useState([]);
+  const [me, setMe] = useState(null);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [stateFilter, setStateFilter] = useState("all");
+  const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => {
     let alive = true;
-    listTickets({ projectId }).then((rows) => {
+    Promise.all([
+      listTickets({ projectId }),
+      listTeammates({ projectId }),
+      getCurrentTeammate({ projectId }),
+    ]).then(([rows, mates, current]) => {
       if (!alive) return;
       setTickets(rows ?? []);
+      setTeammates(mates ?? []);
+      setMe(current ?? null);
       setLoading(false);
+      if (rows === null) toast.error("Couldn't load tickets.");
     });
     return () => {
       alive = false;
@@ -92,23 +109,48 @@ export function TicketsScreen() {
     [ticketId, tickets],
   );
 
+  const teammateName = useMemo(() => {
+    const names = new Map(teammates.map((t) => [t.id, t.name || t.email || "Teammate"]));
+    return (id) => (id ? names.get(id) || "Former teammate" : "Unassigned");
+  }, [teammates]);
+
+  const assigneeOptions = useMemo(
+    () => [
+      { value: "all", label: "All assignees" },
+      ...(me ? [{ value: "me", label: "Assigned to me" }] : []),
+      { value: "unassigned", label: "Unassigned" },
+      ...teammates
+        .filter((t) => t.id !== me?.id)
+        .map((t) => ({ value: t.id, label: t.name || t.email || "Teammate" })),
+    ],
+    [teammates, me],
+  );
+
   const filtered = useMemo(() => {
     let rows = tickets;
     if (typeFilter !== "all") rows = rows.filter((t) => t.type === typeFilter);
     if (stateFilter !== "all") rows = rows.filter((t) => t.state === stateFilter);
+    if (assigneeFilter === "me") {
+      rows = rows.filter((t) => Boolean(me) && t.assigneeId === me.id);
+    } else if (assigneeFilter === "unassigned") {
+      rows = rows.filter((t) => !t.assigneeId);
+    } else if (assigneeFilter !== "all") {
+      rows = rows.filter((t) => t.assigneeId === assigneeFilter);
+    }
     const q = search.trim().toLowerCase();
     if (q) {
       rows = rows.filter(
         (t) =>
           t.title.toLowerCase().includes(q) ||
-          t.description.toLowerCase().includes(q),
+          t.description.toLowerCase().includes(q) ||
+          (t.assigneeId && teammateName(t.assigneeId).toLowerCase().includes(q)),
       );
     }
     return rows;
-  }, [tickets, typeFilter, stateFilter, search]);
+  }, [tickets, typeFilter, stateFilter, assigneeFilter, search, me, teammateName]);
 
   const pager = usePagination(filtered, {
-    resetKey: `${search}|${typeFilter}|${stateFilter}`,
+    resetKey: `${search}|${typeFilter}|${stateFilter}|${assigneeFilter}`,
   });
 
   const stats = useMemo(() => {
@@ -159,6 +201,7 @@ export function TicketsScreen() {
       description: description?.trim() ?? "",
       assigneeId: null,
       projectId: projectId ?? null,
+      linkedConversationIds: [],
       createdAt: now,
       updatedAt: now,
     };
@@ -178,15 +221,19 @@ export function TicketsScreen() {
       toast.error("Couldn't create the ticket.");
       return null;
     }
-    setTickets((prev) => prev.map((t) => (t.id === created.id ? created : t)));
+    setTickets((prev) =>
+      prev.map((t) => (t.id === created.id ? { ...t, ...created } : t)),
+    );
     toast.success("Ticket created");
     openTicket(created.id);
     return created;
   }
 
-  // The editor lifts every edit back up so the list and the open row agree.
+  // The editor lifts every edit back up; merge so fields a plain write doesn't return (link ids) survive.
   const handleUpdate = (updated) =>
-    setTickets((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+    setTickets((prev) =>
+      prev.map((t) => (t.id === updated.id ? { ...t, ...updated } : t)),
+    );
 
   async function handleState(ticket, state) {
     const previous = tickets;
@@ -219,23 +266,34 @@ export function TicketsScreen() {
   const openConversation = (id) =>
     openConversationInTab(id, "All Conversations");
 
+  function handleRowClick(ticket) {
+    const target = conversationTarget(ticket);
+    if (target) openConversation(target);
+    else openTicket(ticket.id);
+  }
+
   const columns = [
     {
       key: "title",
       header: "Ticket",
-      render: (row) => (
-        <div className="flex min-w-0 items-center gap-2">
-          <TicketIcon className="h-4 w-4 shrink-0 text-text-tertiary" />
-          <div className="min-w-0">
-            <p className="truncate font-medium text-foreground">{row.title}</p>
-            {row.description ? (
-              <p className="truncate text-xs text-text-secondary">
-                {row.description}
-              </p>
-            ) : null}
+      render: (row) => {
+        const linked = ticketConversationIds(row).length;
+        const subline =
+          row.type === "tracker"
+            ? `${linked} linked conversation${linked === 1 ? "" : "s"}`
+            : row.description;
+        return (
+          <div className="flex min-w-0 items-center gap-2">
+            <TicketIcon className="h-4 w-4 shrink-0 text-text-tertiary" />
+            <div className="min-w-0">
+              <p className="truncate font-medium text-foreground">{row.title}</p>
+              {subline ? (
+                <p className="truncate text-xs text-text-secondary">{subline}</p>
+              ) : null}
+            </div>
           </div>
-        </div>
-      ),
+        );
+      },
     },
     {
       key: "type",
@@ -246,6 +304,19 @@ export function TicketsScreen() {
       key: "state",
       header: "State",
       render: (row) => <StatusPill status={row.state} map={TICKET_STATE_MAP} />,
+    },
+    {
+      key: "assignee",
+      header: "Assignee",
+      render: (row) => (
+        <span
+          className={
+            row.assigneeId ? "text-sm text-foreground" : "text-sm text-text-tertiary"
+          }
+        >
+          {row.assigneeId && row.assigneeId === me?.id ? "You" : teammateName(row.assigneeId)}
+        </span>
+      ),
     },
     {
       key: "updated",
@@ -265,7 +336,7 @@ export function TicketsScreen() {
         <ActionMenu
           label={`Actions for ${row.title}`}
           items={[
-            { icon: Pencil, label: "Edit", onSelect: () => openTicket(row.id) },
+            { icon: Pencil, label: "Edit ticket", onSelect: () => openTicket(row.id) },
             row.conversationId && {
               icon: MessagesSquare,
               label: "Open conversation",
@@ -295,8 +366,7 @@ export function TicketsScreen() {
     },
   ];
 
-  // Confirmation lives outside the list/editor branch so the editor's danger
-  // zone gets the same dialog the row action does.
+  // Confirmation lives outside the list/editor branch so the editor's danger zone shares it.
   const deleteDialog = (
     <Dialog
       open={!!deleteTarget}
@@ -334,6 +404,7 @@ export function TicketsScreen() {
         <TicketDetailScreen
           ticket={selected}
           projectId={projectId}
+          teammates={teammates}
           onBack={closeTicket}
           onUpdate={handleUpdate}
           onDelete={setDeleteTarget}
@@ -379,6 +450,13 @@ export function TicketsScreen() {
             placeholder="All states"
             height="h-9"
           />
+          <FilterDropdown
+            value={assigneeFilter}
+            onValueChange={setAssigneeFilter}
+            options={assigneeOptions}
+            placeholder="All assignees"
+            height="h-9"
+          />
         </div>
         <SearchInput
           value={search}
@@ -389,9 +467,8 @@ export function TicketsScreen() {
       </Toolbar>
 
       {loading ? (
-        <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-subtle px-6 py-16 text-sm text-text-secondary">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading tickets…
+        <div className="flex items-center justify-center rounded-xl border border-border bg-surface-subtle px-6 py-16">
+          <LogoLoading size={48} aria-label="Loading tickets" />
         </div>
       ) : (
         <div className="space-y-5">
@@ -399,7 +476,7 @@ export function TicketsScreen() {
             columns={columns}
             data={pager.pageItems}
             getRowKey={(row) => row.id}
-            onRowClick={(row) => openTicket(row.id)}
+            onRowClick={handleRowClick}
             empty={
               <div className="rounded-xl border border-border bg-surface-subtle">
                 <EmptyState
@@ -411,7 +488,7 @@ export function TicketsScreen() {
                   }
                   description={
                     tickets.length
-                      ? "Try clearing the search, type or state filter."
+                      ? "Try clearing the search, type, state or assignee filter."
                       : "Create one here, or from any conversation's thread menu."
                   }
                   action={
@@ -423,6 +500,7 @@ export function TicketsScreen() {
                           setSearch("");
                           setTypeFilter("all");
                           setStateFilter("all");
+                          setAssigneeFilter("all");
                         }}
                       >
                         Clear filters

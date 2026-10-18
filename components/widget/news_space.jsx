@@ -1,8 +1,6 @@
 "use client";
 
-// News — published posts with a simple reader. The canvas never drew this
-// space, so it borrows the help centre's row idiom rather than inventing a
-// third list style.
+// News (spec §9) — published posts with a simple reader, in the help centre's row idiom. Bodies render through MarkdownView.
 
 import { useCallback, useEffect, useState } from "react";
 import { ErrorState, FileText, HeaderBar, LoadingState } from "./widget_primitives";
@@ -17,7 +15,7 @@ function formatDate(iso) {
   }
 }
 
-export function NewsSpace({ getApi, route, navigate }) {
+export function NewsSpace({ getApi, route, navigate, sessionKey }) {
   const [rows, setRows] = useState(null);
   const [failed, setFailed] = useState(false);
 
@@ -25,7 +23,7 @@ export function NewsSpace({ getApi, route, navigate }) {
     getApi()
       ?.news()
       .then((result) => {
-        setRows(result ?? []);
+        setRows(Array.isArray(result) ? result : []);
         setFailed(false);
       })
       .catch(() => setFailed(true));
@@ -33,7 +31,13 @@ export function NewsSpace({ getApi, route, navigate }) {
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, sessionKey]);
+
+  const retry = () => {
+    setFailed(false);
+    setRows(null);
+    load();
+  };
 
   const post = route.postId ? rows?.find((p) => p.id === route.postId) : null;
 
@@ -43,13 +47,21 @@ export function NewsSpace({ getApi, route, navigate }) {
         <HeaderBar onBack={() => navigate({ space: "news" })}>
           <span className="gc-header__eyebrow">UPDATE</span>
         </HeaderBar>
-        {rows === null ? (
+        {rows === null && !failed ? (
           <div className="gc-panel__body">
             <LoadingState label="Loading…" />
           </div>
+        ) : failed ? (
+          <div className="gc-panel__body">
+            <ErrorState title="Couldn't load this update" onRetry={retry} />
+          </div>
         ) : !post ? (
           <div className="gc-panel__body">
-            <ErrorState title="Post not found" onRetry={() => navigate({ space: "news" })} />
+            <ErrorState
+              title="Update not found"
+              onRetry={() => navigate({ space: "news" })}
+              retryLabel="Back to news"
+            />
           </div>
         ) : (
           <article className="gc-article">
@@ -77,7 +89,7 @@ export function NewsSpace({ getApi, route, navigate }) {
         {rows === null && !failed ? (
           <LoadingState label="Loading news…" />
         ) : failed ? (
-          <ErrorState title="Couldn't load news" onRetry={load} />
+          <ErrorState title="Couldn't load news" onRetry={retry} />
         ) : rows.length === 0 ? (
           <div className="gc-state">
             <p className="gc-state__title">No updates yet</p>

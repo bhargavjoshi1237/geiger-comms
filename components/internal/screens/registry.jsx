@@ -19,6 +19,12 @@ import { TicketsScreen } from "./inbox/tickets";
 import { PeopleScreen } from "./customers/people";
 import { CompaniesScreen } from "./customers/companies";
 import { SegmentsScreen } from "./customers/segments";
+import { WorkflowsScreen } from "./automation/workflows";
+import { WorkflowTemplatesScreen } from "./automation/workflow_templates";
+import { RunHistoryScreen } from "./automation/run_history";
+import { MacrosScreen } from "./automation/macros";
+import { RoutingRulesScreen } from "./automation/routing_rules";
+import { SLAPoliciesScreen } from "./automation/sla_policies";
 import { workspaceNav } from "@/components/internal/sidebar/sidebar_nav";
 
 // Resolves the nav item (top-level or sub) for a title, for ComingSoon labels.
@@ -44,6 +50,12 @@ const REGISTERED = new Set([
   "People",
   "Companies",
   "Segments",
+  "Workflows",
+  "Workflow Templates",
+  "Run History",
+  "Macros",
+  "Routing Rules",
+  "SLA Policies",
   "Navigation",
   "Teammates",
   "Roles & Permissions",
@@ -84,6 +96,18 @@ export function ActiveScreen({ tab }) {
       return <CompaniesScreen />;
     case "Segments":
       return <SegmentsScreen />;
+    case "Workflows":
+      return <WorkflowsScreen />;
+    case "Workflow Templates":
+      return <WorkflowTemplatesScreen />;
+    case "Run History":
+      return <RunHistoryScreen />;
+    case "Macros":
+      return <MacrosScreen />;
+    case "Routing Rules":
+      return <RoutingRulesScreen />;
+    case "SLA Policies":
+      return <SLAPoliciesScreen />;
     case "Navigation":
       return <NavigationSettingsScreen />;
     case "Teammates":

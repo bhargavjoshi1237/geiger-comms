@@ -1,19 +1,31 @@
 ﻿"use client";
 
-// The Messenger Install section (messenger-widget spec §12): widget app
-// credentials, allowed origins with exact-scheme validation, the embed
-// snippet + SDK install command pre-filled with the public id, secret shown
-// exactly once, and installation status. Talks to /api/widget-apps/*; the
-// signing secret never passes through this UI a second time.
+// Messenger Install section (spec §12): widget apps, exact-origin allowlist, pre-filled snippet + SDK usage, one-time secret, install status.
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Check, Copy, EyeOff, Globe, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input } from "@geiger/ui";
 import { Field, SectionCard } from "@/components/internal/shared/screen_kit";
-import { apiPath, widgetInstallSnippet } from "@/lib/widget/embed";
+import { apiPath, widgetInstallSnippet, widgetLoaderUrl } from "@/lib/widget/embed";
+
+// SDK dependency (spec §11); pin "#<commit-sha>" here once the geiger-comms-widget repo is pushed.
+const SDK_DEPENDENCY = "github:bhargavjoshi1237/geiger-comms-widget";
+const SDK_INSTALL_COMMAND = `npm install ${SDK_DEPENDENCY}`;
 
 const snippet = widgetInstallSnippet;
+
+// React usage pre-filled with the app id; apiBase points the SDK at this deployment (localhost in dev).
+function sdkReactUsage(appId) {
+  const base = widgetLoaderUrl().replace(/\/widget\/v1\.js$/, "");
+  return (
+    `import { GeigerProvider } from "@geiger/comms-widget/react";\n\n` +
+    `// jwt: signed on YOUR server with this app's signing secret; omit for anonymous visitors.\n` +
+    `<GeigerProvider appId="${appId}"${base ? ` apiBase="${base}"` : ""} jwt={jwt}>\n` +
+    `  <App />\n` +
+    `</GeigerProvider>`
+  );
+}
 
 function CopyButton({ value, label }) {
   const [copied, setCopied] = useState(false);
@@ -179,18 +191,22 @@ export function InstallSection({ channel }) {
                   </Button>
                 </div>
               </div>
-              <div className="grid gap-2 sm:grid-cols-[auto_auto_1fr]">
-                {/* SSR renders the placeholder; on the client the real origin is baked in. */}
-                <CopyButton
-                  value={snippet(app.publicId)}
-                  label="Copy snippet"
-                />
-                <CopyButton
-                  value="npm install github:bhargavjoshi1237/geiger-comms-widget#<sha>"
-                  label="Copy SDK install"
-                />
-                <pre className="overflow-x-auto rounded-lg border border-border bg-surface-card p-3 font-mono text-xs text-text-secondary sm:col-span-3">
+              {/* SSR renders the placeholder; on the client the real origin is baked in. */}
+              <div className="grid gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <CopyButton value={snippet(app.publicId)} label="Copy snippet" />
+                </div>
+                <pre className="overflow-x-auto rounded-lg border border-border bg-surface-card p-3 font-mono text-xs text-text-secondary">
                   {snippet(app.publicId)}
+                </pre>
+              </div>
+              <div className="grid gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <CopyButton value={SDK_INSTALL_COMMAND} label="Copy SDK install" />
+                  <CopyButton value={sdkReactUsage(app.publicId)} label="Copy React usage" />
+                </div>
+                <pre className="overflow-x-auto rounded-lg border border-border bg-surface-card p-3 font-mono text-xs text-text-secondary">
+                  {`${SDK_INSTALL_COMMAND}\n\n${sdkReactUsage(app.publicId)}`}
                 </pre>
               </div>
             </div>

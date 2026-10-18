@@ -1,10 +1,11 @@
 import { errorResponse, jsonResponse, readJsonBody } from "@/lib/widget/respond";
-import { serviceClient } from "@/lib/widget/service";
-import { requireWorkspaceUser } from "@/lib/widget/workspace_auth";
+import { isWidgetApiConfigured, serviceClient } from "@/lib/widget/service";
+import { MANAGE_WIDGETS_PERMISSION, isSameOriginRequest, workspaceSession } from "@/lib/widget/workspace_auth";
 import {
+  ROTATION_GRACE_MS,
+  authorizedApp,
   generateSigningSecret,
   last4,
-  loadAppRow,
   sealSigningSecret,
   validateAllowedOrigins,
 } from "@/lib/widget/widget_app_server";
@@ -12,16 +13,25 @@ import { normalizeWidgetApp } from "@/lib/supabase/widget_apps";
 
 // PATCH  /api/widget-apps/:id — rename / replace allowed origins.
 // DELETE /api/widget-apps/:id — revoke (soft delete).
+// POST   /api/widget-apps/:id — rotate the signing secret (shown once); the old one verifies for 24h only.
+// All three need comms.settings.manage in the app's project; anything else answers 404, never 403 (§10.8).
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function PATCH(request, { params }) {
-  const user = await requireWorkspaceUser();
-  if (!user) return errorResponse(401, "unauthorized");
-
+async function guard(request, params) {
+  if (!isWidgetApiConfigured()) return { response: errorResponse(503, "not_configured") };
+  if (!isSameOriginRequest(request)) return { response: errorResponse(403, "cross_site") };
+  const session = await workspaceSession();
+  if (!session) return { response: errorResponse(401, "unauthorized") };
   const { id } = await params;
-  const app = await loadAppRow(id);
-  if (!app) return errorResponse(404, "not_found");
+  const app = await authorizedApp(session, id, MANAGE_WIDGETS_PERMISSION);
+  if (!app) return { response: errorResponse(404, "not_found") };
+  return { app };
+}
+
+export async function PATCH(request, { params }) {
+  const { app, response } = await guard(request, params);
+  if (response) return response;
 
   const body = await readJsonBody(request);
   const patch = {};
@@ -36,7 +46,7 @@ export async function PATCH(request, { params }) {
   const { data, error } = await serviceClient()
     .from("widget_apps")
     .update(patch)
-    .eq("id", id)
+    .eq("id", app.id)
     .select("*")
     .single();
   if (error) {
@@ -47,17 +57,13 @@ export async function PATCH(request, { params }) {
 }
 
 export async function DELETE(request, { params }) {
-  const user = await requireWorkspaceUser();
-  if (!user) return errorResponse(401, "unauthorized");
-
-  const { id } = await params;
-  const app = await loadAppRow(id);
-  if (!app) return errorResponse(404, "not_found");
+  const { app, response } = await guard(request, params);
+  if (response) return response;
 
   const { error } = await serviceClient()
     .from("widget_apps")
     .update({ deleted_at: new Date().toISOString() })
-    .eq("id", id);
+    .eq("id", app.id);
   if (error) {
     console.error("[widget-apps.delete]", error.message);
     return errorResponse(500, "write_failed");
@@ -65,36 +71,29 @@ export async function DELETE(request, { params }) {
   return new Response(null, { status: 204 });
 }
 
-// POST /api/widget-apps/:id/rotate — new signing secret (shown once); the old
-// one stays verifiable for a grace period so live sessions don't break
-// (spec §10.1). Implemented here rather than PATCH because rotation is not an
-// ordinary field edit.
 export async function POST(request, { params }) {
-  const user = await requireWorkspaceUser();
-  if (!user) return errorResponse(401, "unauthorized");
-
-  const { id } = await params;
-  const app = await loadAppRow(id);
-  if (!app) return errorResponse(404, "not_found");
+  const { app, response } = await guard(request, params);
+  if (response) return response;
 
   const secret = generateSigningSecret();
-  const meta = app.metadata && typeof app.metadata === "object" ? app.metadata : {};
-  // Grace period: the current sealed secret moves aside and keeps verifying
-  // until the next rotation replaces it.
   const { data, error } = await serviceClient()
     .from("widget_apps")
     .update({
       secret_hash: sealSigningSecret(secret),
       secret_last4: last4(secret),
-      metadata: { ...meta, previous_secret: app.secret_hash },
+      previous_secret_hash: app.secret_hash,
+      previous_secret_expires_at: new Date(Date.now() + ROTATION_GRACE_MS).toISOString(),
     })
-    .eq("id", id)
+    .eq("id", app.id)
+    // Compare-and-swap: a concurrent rotation must not silently orphan the secret it just showed.
+    .eq("secret_hash", app.secret_hash)
     .select("*")
-    .single();
+    .maybeSingle();
   if (error) {
     console.error("[widget-apps.rotate]", error.message);
     return errorResponse(500, "write_failed");
   }
+  if (!data) return errorResponse(409, "rotation_conflict");
 
   // Show the new secret once; it is never retrievable again.
   return jsonResponse({ ...normalizeWidgetApp(data), signingSecret: secret });

@@ -9,6 +9,8 @@
 // the path data is kept exactly so the live widget matches it pixel for pixel.
 // Icons are decorative — the control around them carries the label.
 
+import { LogoLoading } from "@geiger/ui/logo-loading";
+
 /* ----------------------------------------------------------------- icons -- */
 
 function svg(size, strokeWidth, rest) {
@@ -35,17 +37,19 @@ export function MessageCircle({ size = 16, strokeWidth = 2, ...rest }) {
   );
 }
 
-// The brand mark: a chat bubble whose three message lines are the three leaning
-// strokes of the Geiger logo (public/logo1.svg), kept at the logo's own
-// 38-degree lean. Reads as "chat" at launcher size and as "Geiger" up close.
-// The loader draws the identical glyph on the host page — keep them in step.
-export function BrandBubble({ size = 24, strokeWidth = 2, ...rest }) {
+// The Geiger logo (public/logo1.svg's three strokes), filled; `size` is its width. The loader's SVG_MARK draws the same path.
+export function BrandMark({ size = 24, ...rest }) {
   return (
-    <svg {...svg(size, strokeWidth, rest)}>
-      <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
-      <path d="M6.9 14.7 11.2 9.3" strokeWidth={1.6} />
-      <path d="M10.5 14.7 14.8 9.3" strokeWidth={1.6} />
-      <path d="M14.1 14.7 18.4 9.3" strokeWidth={1.6} />
+    <svg
+      width={size}
+      height={Math.round((size * 285) / 467)}
+      viewBox="0 0 467 285"
+      fill="currentColor"
+      aria-hidden
+      focusable={false}
+      {...rest}
+    >
+      <path d="M409 1h57L304 284h-60zM285 1h60L181 284h-58zM161 1h63L57 284H0z" />
     </svg>
   );
 }
@@ -109,6 +113,28 @@ export function BookHeart({ size = 16, strokeWidth = 2, ...rest }) {
     <svg {...svg(size, strokeWidth, rest)}>
       <path d="M12 5v16" />
       <path d="M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z" />
+    </svg>
+  );
+}
+
+export function Newspaper({ size = 16, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="M15 18h-5" />
+      <path d="M18 14h-8" />
+      <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0v-9a2 2 0 0 1 2-2h2" />
+      <rect width="8" height="4" x="10" y="6" rx="1" />
+    </svg>
+  );
+}
+
+export function Ticket({ size = 16, strokeWidth = 2, ...rest }) {
+  return (
+    <svg {...svg(size, strokeWidth, rest)}>
+      <path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z" />
+      <path d="M13 5v2" />
+      <path d="M13 17v2" />
+      <path d="M13 11v2" />
     </svg>
   );
 }
@@ -330,10 +356,11 @@ export function Spinner({ className = "" }) {
   return <span className={`gc-spinner ${className}`.trim()} role="status" aria-label="Loading" />;
 }
 
+// Section-level loader: the shared Geiger mark, sized for a panel body.
 export function LoadingState({ label = "Loading…" }) {
   return (
     <div className="gc-state">
-      <Spinner />
+      <LogoLoading size={36} aria-label={label} />
       <p className="gc-state__hint">{label}</p>
     </div>
   );
@@ -348,14 +375,14 @@ export function EmptyState({ title, hint }) {
   );
 }
 
-export function ErrorState({ title = "Something went wrong", hint, onRetry }) {
+export function ErrorState({ title = "Something went wrong", hint, onRetry, retryLabel = "Try again" }) {
   return (
-    <div className="gc-state gc-state--error">
+    <div className="gc-state gc-state--error" role="alert">
       <p className="gc-state__title">{title}</p>
       {hint ? <p className="gc-state__hint">{hint}</p> : null}
       {onRetry ? (
         <button type="button" className="gc-outlinebtn" onClick={onRetry}>
-          Try again
+          {retryLabel}
         </button>
       ) : null}
     </div>
@@ -363,14 +390,33 @@ export function ErrorState({ title = "Something went wrong", hint, onRetry }) {
 }
 
 // First-class offline surface — consumer connections are flaky (spec §9).
-export function ReconnectingBanner({ visible }) {
+export function ReconnectingBanner({ visible, label = "Reconnecting…" }) {
   if (!visible) return null;
   return (
-    <div className="gc-banner gc-banner--warn">
+    <div className="gc-banner gc-banner--warn" role="status">
       <Spinner className="gc-spinner--sm" />
-      Reconnecting…
+      {label}
     </div>
   );
+}
+
+// Workspace logo when the config carries an https URL, else the brand's initials.
+export function BrandLogo({ name, logoUrl, style }) {
+  return (
+    <div className="gc-header__logo" style={style} aria-hidden="true">
+      {logoUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element -- remote, workspace-configured logo
+        <img src={logoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" }} />
+      ) : (
+        initialsOf(name)
+      )}
+    </div>
+  );
+}
+
+// Only http(s) links are ever rendered from message/attachment data.
+export function safeHref(url) {
+  return typeof url === "string" && /^https?:\/\//i.test(url) ? url : null;
 }
 
 export function Banner({ tone = "muted", children }) {
