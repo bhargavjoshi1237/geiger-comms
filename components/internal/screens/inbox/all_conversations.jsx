@@ -1,10 +1,10 @@
 "use client";
 
-// All Conversations — the omnichannel queue. Applies a saved view when the
-// URL carries ?view=<id> (a Views row click lands here with that param).
+// All Conversations — the omnichannel queue. ?view=<id> applies a saved view (Views row click);
+// ?channel=<channelId> narrows to one connected channel (Channels → "View conversations"), handled in the shell.
 
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { LogoLoading } from "@geiger/ui";
 import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
 import { getView } from "@/lib/supabase/views";
 import { InboxShell } from "./inbox_shell";
@@ -17,35 +17,32 @@ export function AllConversationsScreen() {
   return <ViewedShell key={viewId} viewId={viewId} />;
 }
 
-// Resolves one saved view into a starting filter, then mounts the shared
-// shell. setState only happens in the fetch continuation (repo convention).
+// Resolves one saved view into a starting filter, then mounts the shared shell (setState only in the fetch continuation).
 function ViewedShell({ viewId }) {
-  const [filter, setFilter] = useState(null);
+  const [view, setView] = useState(null);
 
   useEffect(() => {
     let alive = true;
-    getView(viewId).then((view) => {
+    getView(viewId).then((row) => {
       if (!alive) return;
-      setFilter(
-        view
-          ? { ...defaultFilter(), ...view.filter, sort: view.sort || "newest" }
-          : defaultFilter(),
-      );
+      setView({
+        title: row?.name || null,
+        filter: row ? { ...defaultFilter(), ...row.filter, sort: row.sort || "newest" } : defaultFilter(),
+      });
     });
     return () => {
       alive = false;
     };
   }, [viewId]);
 
-  if (!filter) {
+  if (!view) {
     return (
-      <div className="flex h-full items-center justify-center gap-2 rounded-xl border border-border bg-surface-subtle px-6 py-16 text-sm text-text-secondary">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Loading view…
+      <div className="flex h-full items-center justify-center" aria-label="Loading view">
+        <LogoLoading size={80} />
       </div>
     );
   }
-  return <InboxShell preset="all" startFilter={filter} />;
+  return <InboxShell preset="all" startFilter={view.filter} title={view.title ?? undefined} />;
 }
 
 export default AllConversationsScreen;

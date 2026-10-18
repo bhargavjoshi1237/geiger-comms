@@ -1,6 +1,4 @@
-// GET /api/widget/quick-actions — the four-card grid shown on the Hub. The
-// set is workspace-configurable; an unconfigured workspace gets the default
-// four "shell" actions (matching the Hub screenshot).
+// GET /api/widget/quick-actions — the Hub's quick-action cards from messenger channel config; an unconfigured workspace gets the default four.
 
 import { errorResponse, jsonResponse } from "@/lib/widget/respond";
 import { requirePrincipal } from "@/lib/widget/auth";
@@ -17,6 +15,20 @@ const DEFAULT_ACTIONS = [
   { id: "account", label: "Account & login", icon: "user" },
 ];
 
+// Only the fields the card renders, from a bounded list, so channel config never leaks wholesale.
+function cleanActions(list) {
+  if (!Array.isArray(list)) return DEFAULT_ACTIONS;
+  const out = list
+    .filter((a) => a && typeof a === "object" && typeof a.label === "string")
+    .slice(0, 8)
+    .map((a) => ({
+      id: typeof a.id === "string" ? a.id.slice(0, 64) : a.label.slice(0, 64),
+      label: a.label.slice(0, 80),
+      icon: typeof a.icon === "string" ? a.icon.slice(0, 32) : null,
+    }));
+  return out.length ? out : DEFAULT_ACTIONS;
+}
+
 export async function GET(request) {
   if (!isWidgetApiConfigured()) return errorResponse(503, "not_configured");
   const principal = await requirePrincipal(request);
@@ -25,25 +37,5 @@ export async function GET(request) {
   const app = await getAppById(principal.appId);
   if (!app) return errorResponse(404, "app_not_found");
 
-  const cfg = await buildConfig(app);
-  return jsonResponse({ actions: cfg });
-}
-
-async function buildConfig(app) {
-  // The action list lives in messenger channel config. Missing field → default.
-  try {
-    const { data, error } = await (
-      await import("@/lib/widget/service")
-    ).serviceClient()
-      .from("channels")
-      .select("config")
-      .eq("id", app.channel_id ?? "")
-      .maybeSingle();
-    if (error || !data?.config || !Array.isArray(data.config.quickActions)) {
-      return DEFAULT_ACTIONS;
-    }
-    return data.config.quickActions;
-  } catch {
-    return DEFAULT_ACTIONS;
-  }
+  return jsonResponse({ actions: cleanActions(app.channel?.config?.quickActions) });
 }

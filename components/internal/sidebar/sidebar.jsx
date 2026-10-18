@@ -14,6 +14,7 @@ import {
 } from "@geiger/ui";
 import { PanelLeft } from "lucide-react";
 import { SidebarOption } from "./sidebar_option";
+import { useMentionBadge } from "./use_mention_badge";
 import { useVisibleNav } from "@/lib/hooks/use-visible-nav";
 import { Button } from "@geiger/ui";
 
@@ -58,6 +59,13 @@ export function AppSidebar({
   // hid in Settings → Navigation.
   const visibleNav = useVisibleNav();
 
+  // Live counts shown on nested destinations, keyed by sub-item title.
+  const unreadMentions = useMentionBadge();
+  const subBadges = React.useMemo(
+    () => (unreadMentions > 0 ? { Mentions: unreadMentions > 99 ? "99+" : String(unreadMentions) } : {}),
+    [unreadMentions],
+  );
+
   const toggleExpand = (title) => {
     setExpandedItems((prev) => ({
       ...prev,
@@ -82,6 +90,7 @@ export function AppSidebar({
                   icon={item.icon}
                   isActive={activeTab === item.title}
                   badge={item.badge}
+                  subBadges={subBadges}
                   subItems={item.subItems || null}
                   isExpanded={
                     expandedItems[item.title] !== undefined

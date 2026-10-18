@@ -1,18 +1,16 @@
 "use client";
 
-// Offline — the away notice in the header, the AI offered as the immediate
-// path, and an email-and-message fallback for anything it can't close out.
-// Submits a lead through /api/widget/leads, which the workspace turns into a
-// conversation on the next business day.
+// Offline — the away notice, the AI offered as the immediate path when one is configured, and an email-and-message fallback.
+// Submits a lead through the session-authenticated API and tells the host the visitor supplied their email (spec §8).
 
 import { useState } from "react";
-import { Clock, Sparkles, X } from "./widget_primitives";
+import { BrandLogo, Clock, Sparkles, X } from "./widget_primitives";
 
-const BASE = process.env.NEXT_PUBLIC_BASE_PATH || "";
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function OfflineMessageView({ config, contact, onAsk, onClose }) {
-  const brand = config?.name || "Northwind Help";
-  const assistant = config?.assistantName || "Aria";
+export function OfflineMessageView({ getApi, config, contact, onAsk, onClose, onEmailSupplied }) {
+  const brand = config?.name || "Support";
+  const assistant = config?.assistantName || "";
   const backAt = config?.backAt || config?.officeHoursNote || "";
   const [email, setEmail] = useState(contact?.email || "");
   const [body, setBody] = useState("");
@@ -21,17 +19,23 @@ export function OfflineMessageView({ config, contact, onAsk, onClose }) {
   const [error, setError] = useState("");
 
   async function submit() {
-    if (!email.trim() || !body.trim() || sending) return;
+    const address = email.trim();
+    const api = getApi?.();
+    if (!address || !body.trim() || sending) return;
+    if (!EMAIL_RE.test(address)) {
+      setError("That email address doesn't look right.");
+      return;
+    }
+    if (!api?.leaveMessage) {
+      setError("Couldn't send right now. Try again in a moment.");
+      return;
+    }
     setSending(true);
     setError("");
     try {
-      const res = await fetch(`${BASE}/api/widget/leads`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), message: body.trim() }),
-      });
-      if (!res.ok) throw new Error("send_failed");
+      await api.leaveMessage(address, body.trim());
       setSent(true);
+      onEmailSupplied?.(address);
     } catch {
       setError("Couldn't send right now. Try again in a moment.");
     } finally {
@@ -44,9 +48,7 @@ export function OfflineMessageView({ config, contact, onAsk, onClose }) {
       <header className="gc-offlinehead">
         <div className="gc-header__row">
           <div className="gc-header__brand">
-            <div className="gc-header__logo" style={{ width: 22, height: 22, fontSize: 10 }} aria-hidden="true">
-              {(brand.match(/[A-Z]/g) || ["N"]).slice(0, 2).join("")}
-            </div>
+            <BrandLogo name={brand} logoUrl={config?.logoUrl} style={{ width: 22, height: 22, fontSize: 10 }} />
             <span className="gc-header__brandname" style={{ fontSize: 12.5 }}>
               {brand}
             </span>
@@ -69,28 +71,32 @@ export function OfflineMessageView({ config, contact, onAsk, onClose }) {
       </header>
 
       <div className="gc-offline">
-        <div className="gc-offercard">
-          <Sparkles size={15} className="gc-offercard__icon" />
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <p className="gc-offercard__title">{assistant} is still awake</p>
-            <p className="gc-offercard__desc">
-              {assistant} can answer most questions now and flags anything she can&rsquo;t for the morning.
-            </p>
-            <button type="button" className="gc-primarybtn" onClick={onAsk}>
-              Ask {assistant} now
-            </button>
-          </div>
-        </div>
+        {assistant && onAsk ? (
+          <>
+            <div className="gc-offercard">
+              <Sparkles size={15} className="gc-offercard__icon" />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p className="gc-offercard__title">{assistant} can help now</p>
+                <p className="gc-offercard__desc">
+                  {assistant} is our AI assistant. It can answer most questions now and pass anything else to the team.
+                </p>
+                <button type="button" className="gc-primarybtn" onClick={onAsk}>
+                  Ask {assistant} now
+                </button>
+              </div>
+            </div>
 
-        <div className="gc-rule">
-          <span className="gc-rule__label">OR LEAVE A MESSAGE</span>
-        </div>
+            <div className="gc-rule">
+              <span className="gc-rule__label">OR LEAVE A MESSAGE</span>
+            </div>
+          </>
+        ) : null}
 
         {sent ? (
           <div className="gc-state">
             <p className="gc-state__title">Message sent</p>
             <p className="gc-state__hint">
-              We&rsquo;ll email you back at {email} as soon as a teammate is online.
+              We&rsquo;ll email you back at {email.trim()} as soon as a teammate is online.
             </p>
           </div>
         ) : (
@@ -102,6 +108,7 @@ export function OfflineMessageView({ config, contact, onAsk, onClose }) {
               <input
                 id="gc-offline-email"
                 type="email"
+                autoComplete="email"
                 className="gc-input"
                 value={email}
                 placeholder="you@example.com"
@@ -121,7 +128,11 @@ export function OfflineMessageView({ config, contact, onAsk, onClose }) {
                 onChange={(e) => setBody(e.target.value)}
               />
             </div>
-            {error ? <p className="gc-state__hint" style={{ color: "var(--gc-danger)" }}>{error}</p> : null}
+            {error ? (
+              <p className="gc-state__hint" role="alert" style={{ color: "var(--gc-danger)" }}>
+                {error}
+              </p>
+            ) : null}
           </div>
         )}
       </div>

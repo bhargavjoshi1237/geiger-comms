@@ -1,4 +1,4 @@
-// POST /api/widget/conversations/:id/read — mark the thread read.
+// POST /api/widget/conversations/:id/read — the visitor has read the thread; never marks the agent side read.
 
 import { errorResponse, jsonResponse } from "@/lib/widget/respond";
 import { requirePrincipal } from "@/lib/widget/auth";

@@ -1,12 +1,7 @@
 "use client";
 
-// Help — the help-centre search and the article reader.
-//
-// Search is live-filtered against whatever the API returned for the current
-// query, with the matched term marked in the title; an "ask <assistant>
-// instead" nudge sits above the results and a "can't find it?" footer offers
-// the team. The reader adds the category eyebrow, byline and a
-// "did this answer your question?" footer.
+// Help (spec §9) — article search and reader over published articles only; bodies render through MarkdownView, never raw HTML.
+// Search filters the fetched set locally; the "ask <assistant>" nudge appears only when the server configures an assistant.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -17,6 +12,7 @@ import {
   ErrorState,
   FileText,
   HeaderBar,
+  initialsOf,
   LoadingState,
   Search,
   Sparkles,
@@ -45,15 +41,18 @@ function highlight(text, term) {
   return parts.map((p, i) => (typeof p === "string" ? <span key={i}>{p}</span> : <mark key={i}>{p.hit}</mark>));
 }
 
-export function HelpSpace({ getApi, config, route, navigate, postToHost }) {
+export function HelpSpace({ getApi, config, route, navigate, postToHost, sessionKey }) {
+  const assistant = config?.assistantName || "";
   if (route.articleId) {
     return (
       <ArticleReader
         articleId={route.articleId}
         getApi={getApi}
-        assistant={config?.assistantName || "Aria"}
+        sessionKey={sessionKey}
+        assistant={assistant}
         onBack={() => navigate({ space: "help" })}
         onAskInstead={() => navigate({ space: "ask" })}
+        onMessageTeam={() => navigate({ space: "messages", compose: true })}
       />
     );
   }
@@ -61,7 +60,8 @@ export function HelpSpace({ getApi, config, route, navigate, postToHost }) {
   return (
     <HelpCentre
       getApi={getApi}
-      assistant={config?.assistantName || "Aria"}
+      sessionKey={sessionKey}
+      assistant={assistant}
       route={route}
       navigate={navigate}
       postToHost={postToHost}
@@ -69,18 +69,17 @@ export function HelpSpace({ getApi, config, route, navigate, postToHost }) {
   );
 }
 
-function HelpCentre({ getApi, assistant, route, navigate, postToHost }) {
+function HelpCentre({ getApi, sessionKey, assistant, route, navigate, postToHost }) {
   const [query, setQuery] = useState(route.query || "");
   const [rows, setRows] = useState(null);
   const [failed, setFailed] = useState(false);
 
-  // One fetch of the published set; filtering below is local so typing is
-  // instant and every keystroke does not become a request.
+  // One fetch of the published set; filtering below is local so a keystroke never becomes a request.
   const load = useCallback(() => {
     getApi()
       ?.articles?.("")
       .then((result) => {
-        setRows(result ?? []);
+        setRows(Array.isArray(result) ? result : []);
         setFailed(false);
       })
       .catch(() => setFailed(true));
@@ -88,7 +87,7 @@ function HelpCentre({ getApi, assistant, route, navigate, postToHost }) {
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, sessionKey]);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -130,29 +129,38 @@ function HelpCentre({ getApi, assistant, route, navigate, postToHost }) {
       </header>
 
       <div className="gc-panel__body" style={{ padding: "12px 0" }}>
-        <button type="button" className="gc-suggest" onClick={() => navigate({ space: "ask", query })}>
-          <Sparkles size={15} className="gc-suggest__icon" />
-          <div className="gc-suggest__body">
-            <p className="gc-suggest__title">Ask {assistant} instead</p>
-            <p className="gc-suggest__desc">
-              {assistant} checks your actual order rather than the general article.
-            </p>
-          </div>
-          <ChevronRight
-            size={14}
-            style={{ color: "var(--gc-text-tertiary)", flex: "none", marginTop: 3 }}
-          />
-        </button>
+        {assistant ? (
+          <button type="button" className="gc-suggest" onClick={() => navigate({ space: "ask", query })}>
+            <Sparkles size={15} className="gc-suggest__icon" />
+            <div className="gc-suggest__body">
+              <p className="gc-suggest__title">Ask {assistant} instead</p>
+              <p className="gc-suggest__desc">{assistant} is our AI assistant and answers in seconds.</p>
+            </div>
+            <ChevronRight
+              size={14}
+              style={{ color: "var(--gc-text-tertiary)", flex: "none", marginTop: 3 }}
+            />
+          </button>
+        ) : null}
 
         {rows === null && !failed ? (
           <LoadingState label="Loading articles…" />
         ) : failed ? (
-          <ErrorState title="Couldn't load articles" onRetry={load} />
+          <ErrorState
+            title="Couldn't load articles"
+            onRetry={() => {
+              setFailed(false);
+              setRows(null);
+              load();
+            }}
+          />
         ) : results.length === 0 ? (
           <div className="gc-state">
             <p className="gc-state__title">{query ? "No matches" : "No articles yet"}</p>
             {query ? (
-              <p className="gc-state__hint">Try a different search — or ask {assistant} instead.</p>
+              <p className="gc-state__hint">
+                Try a different search{assistant ? ` — or ask ${assistant} instead` : " — or message the team"}.
+              </p>
             ) : null}
           </div>
         ) : (
@@ -190,7 +198,7 @@ function HelpCentre({ getApi, assistant, route, navigate, postToHost }) {
         <button
           type="button"
           className="gc-primarybtn"
-          onClick={() => navigate({ space: "messages", newAbout: "other", newLabel: "Something else" })}
+          onClick={() => navigate({ space: "messages", compose: true })}
         >
           Message the team
         </button>
@@ -213,7 +221,7 @@ function relativeDay(iso) {
   }
 }
 
-function ArticleReader({ articleId, getApi, assistant, onBack, onAskInstead }) {
+function ArticleReader({ articleId, getApi, sessionKey, assistant, onBack, onAskInstead, onMessageTeam }) {
   const [state, setState] = useState({ status: "loading", article: null });
   const [feedback, setFeedback] = useState(null);
 
@@ -229,7 +237,7 @@ function ArticleReader({ articleId, getApi, assistant, onBack, onAskInstead }) {
     return () => {
       active = false;
     };
-  }, [articleId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [articleId, getApi, sessionKey]);
 
   const article = state.article;
 
@@ -260,18 +268,25 @@ function ArticleReader({ articleId, getApi, assistant, onBack, onAskInstead }) {
         </div>
       ) : state.status === "failed" ? (
         <div className="gc-panel__body">
-          <ErrorState title="Article not found" onRetry={onBack} />
+          <ErrorState
+            title="Article not found"
+            hint="It may have been moved or unpublished."
+            onRetry={onBack}
+            retryLabel="Back to help"
+          />
         </div>
       ) : (
         <>
           <article className="gc-article">
             <h2>{article.title}</h2>
             <div className="gc-article__byline">
-              <div className="gc-avatar gc-avatar--xs" aria-hidden="true">
-                {(article.authorName || "Author").slice(0, 2).toUpperCase()}
-              </div>
+              {article.authorName ? (
+                <div className="gc-avatar gc-avatar--xs" aria-hidden="true">
+                  {initialsOf(article.authorName)}
+                </div>
+              ) : null}
               <span>
-                {(article.authorName || "Author").toUpperCase()} · UPDATED{" "}
+                {article.authorName ? `${article.authorName.toUpperCase()} · ` : ""}UPDATED{" "}
                 {relativeDay(article.updatedAt).toUpperCase()}
               </span>
             </div>
@@ -313,9 +328,15 @@ function ArticleReader({ articleId, getApi, assistant, onBack, onAskInstead }) {
                 </button>
               </div>
             </div>
-            <button type="button" className="gc-outlinebtn" onClick={onAskInstead}>
-              Ask {assistant} about my order instead
-            </button>
+            {assistant ? (
+              <button type="button" className="gc-outlinebtn" onClick={onAskInstead}>
+                Ask {assistant} instead
+              </button>
+            ) : (
+              <button type="button" className="gc-outlinebtn" onClick={onMessageTeam}>
+                Still need help? Message the team
+              </button>
+            )}
           </footer>
         </>
       )}

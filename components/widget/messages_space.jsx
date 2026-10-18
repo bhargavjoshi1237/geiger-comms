@@ -1,14 +1,9 @@
 "use client";
 
-// Messages — the conversation list, the thread and the "new conversation"
-// screen, all in the drawn messenger shell.
-//
-// One thread renderer covers every case the design draws: an AI author gets a
-// plain bubble and the "get a human" escape hatch, a human author gets an
-// avatar and a read receipt, a closed thread swaps the composer for the rating
-// card. What changes between them is the data, not the layout.
+// Messages — conversation list → thread → composer (spec §9). The list and unread counts come from the app root, which owns realtime;
+// the open thread re-fetches on every body-less realtime notification and resume tick (§6). Rendering stays text-only via MarkdownView.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AiBadge,
   Avatar,
@@ -19,6 +14,7 @@ import {
   HeaderBar,
   LoadingState,
   Plus,
+  safeHref,
   Sparkles,
   StatusPill,
   UnreadCount,
@@ -29,6 +25,8 @@ import { stripMetadata } from "./image";
 import { MarkdownView } from "./markdown_view";
 import { NewConversationView } from "./new_conversation";
 import { RatingCard } from "./rating";
+
+const PAGE_SIZE = 50; // the API's thread page size
 
 function formatTime(iso) {
   if (!iso) return "";
@@ -60,43 +58,59 @@ function authorKind(role) {
   return "agent";
 }
 
+const isOptimistic = (m) => typeof m?.id === "string" && m.id.startsWith("optimistic-");
+
+function timeOf(m) {
+  const t = Date.parse(m?.createdAt || "");
+  return Number.isNaN(t) ? 0 : t;
+}
+
+// Server rows win by id, earlier pages already loaded are kept, unconfirmed optimistic sends stay at the end.
+function mergeMessages(current, incoming) {
+  const byId = new Map();
+  for (const m of current) if (m?.id && !isOptimistic(m)) byId.set(m.id, m);
+  for (const m of incoming || []) if (m?.id) byId.set(m.id, m);
+  const confirmed = [...byId.values()].sort((a, b) => timeOf(a) - timeOf(b));
+  return [...confirmed, ...current.filter(isOptimistic)];
+}
+
+// The API's keyset cursor only accepts a Z-suffixed ISO timestamp.
+function cursorOf(iso) {
+  const t = Date.parse(iso || "");
+  return Number.isNaN(t) ? null : new Date(t).toISOString();
+}
+
+function optimisticId() {
+  return `optimistic-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`;
+}
+
 export function MessagesSpace({
   getApi,
   config,
   route,
   navigate,
-  refreshSignal,
-  onUnread,
+  conversations,
+  conversationsFailed,
+  reloadConversations,
+  unreadMap,
+  threadTicks,
+  syncTick,
+  sessionKey,
+  onSeen,
   visible = true,
 }) {
-  const [conversations, setConversations] = useState(null);
-  const [failed, setFailed] = useState(false);
-
-  const load = useCallback(() => {
-    getApi()
-      ?.conversations()
-      .then((rows) => {
-        setConversations(rows ?? []);
-        setFailed(false);
-      })
-      .catch(() => setFailed(true));
-  }, [getApi]);
-
-  // A hidden iframe keeps its last snapshot; polling resumes on the next show.
-  useEffect(() => {
-    if (visible) load();
-  }, [load, refreshSignal, visible]);
-
-  if (route.newAbout || route.newLabel) {
+  if (route.compose || route.newAbout) {
     return (
       <NewConversationView
         getApi={getApi}
         config={config}
         initialKind={route.newAbout}
-        initialLabel={route.newLabel}
         initialDraft={route.draft}
         onBack={() => navigate({ space: "messages" })}
-        onSent={(conversation) => navigate({ space: "messages", conversationId: conversation.id })}
+        onSent={(conversation) => {
+          reloadConversations?.();
+          navigate({ space: "messages", conversationId: conversation.id });
+        }}
       />
     );
   }
@@ -106,12 +120,17 @@ export function MessagesSpace({
       <ThreadScreen
         key={route.conversationId}
         conversationId={route.conversationId}
+        conversation={conversations?.find((c) => c.id === route.conversationId) ?? null}
         initialBody={route.draft || ""}
         getApi={getApi}
         config={config}
+        liveTick={threadTicks?.[route.conversationId] || 0}
+        syncTick={syncTick}
+        sessionKey={sessionKey}
+        visible={visible}
         onBack={() => navigate({ space: "messages" })}
-        onSeen={() => onUnread?.(0)}
-        onConversationsChanged={load}
+        onSeen={onSeen}
+        onConversationsChanged={reloadConversations}
       />
     );
   }
@@ -119,19 +138,17 @@ export function MessagesSpace({
   return (
     <ConversationsList
       conversations={conversations}
+      failed={conversationsFailed}
+      unreadMap={unreadMap}
       config={config}
-      failed={failed}
-      load={load}
-      open={(c) => {
-        onUnread?.(0);
-        navigate({ space: "messages", conversationId: c.id });
-      }}
-      onNew={() => navigate({ space: "messages", newAbout: "general", newLabel: "Something else" })}
+      load={reloadConversations}
+      open={(c) => navigate({ space: "messages", conversationId: c.id })}
+      onNew={() => navigate({ space: "messages", compose: true })}
     />
   );
 }
 
-function ConversationsList({ conversations, config, failed, load, open, onNew }) {
+function ConversationsList({ conversations, failed, unreadMap, config, load, open, onNew }) {
   const [filter, setFilter] = useState("open");
 
   const rows = conversations ?? [];
@@ -139,8 +156,8 @@ function ConversationsList({ conversations, config, failed, load, open, onNew })
   const closedRows = rows.filter((c) => c.state === "closed");
   const shown = filter === "open" ? openRows : closedRows;
   const team = config?.team ?? [];
-  const teamOnline = config?.teamOnline !== false;
-  const assistant = config?.assistantName || "Aria";
+  const assistant = config?.assistantName || "";
+  const teamKnown = typeof config?.teamOnline === "boolean";
 
   return (
     <>
@@ -180,37 +197,40 @@ function ConversationsList({ conversations, config, failed, load, open, onNew })
           <ErrorState title="Couldn't load your messages" onRetry={load} />
         ) : (
           <>
-            {shown.map((c, i) => (
-              <button
-                key={c.id}
-                type="button"
-                className="gc-convo"
-                data-active={i === 0 && filter === "open"}
-                data-closed={c.state === "closed"}
-                onClick={() => open(c)}
-              >
-                {c.aiOnly ? (
-                  <div className="gc-avatar gc-avatar--lg" aria-hidden="true">
-                    <Sparkles size={14} />
+            {shown.map((c, i) => {
+              const unread = unreadMap?.[c.id] || 0;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  className="gc-convo"
+                  data-active={i === 0 && filter === "open"}
+                  data-closed={c.state === "closed"}
+                  onClick={() => open(c)}
+                >
+                  {c.aiOnly ? (
+                    <div className="gc-avatar gc-avatar--lg" aria-hidden="true">
+                      <Sparkles size={14} />
+                    </div>
+                  ) : (
+                    <Avatar name={c.agentName || c.subject || config?.name} size="lg" />
+                  )}
+                  <div className="gc-convo__body">
+                    <div className="gc-convo__top">
+                      <span className="gc-convo__title">{c.subject || "Your conversation"}</span>
+                      <span className="gc-convo__time">{relativeShort(c.lastActivityAt || c.updatedAt)}</span>
+                    </div>
+                    <p className={unread ? "gc-convo__preview gc-convo__preview--unread" : "gc-convo__preview"}>
+                      {c.previewAuthor ? <strong>{c.previewAuthor}:</strong> : null} {c.preview || "—"}
+                    </p>
+                    <div className="gc-convo__meta">
+                      <StatusPill status={c.state === "closed" ? "closed" : "open"} />
+                      {unread ? <UnreadCount count={unread} /> : null}
+                    </div>
                   </div>
-                ) : (
-                  <Avatar name={c.agentName || c.subject} size="lg" showStatus online={c.state !== "closed"} />
-                )}
-                <div className="gc-convo__body">
-                  <div className="gc-convo__top">
-                    <span className="gc-convo__title">{c.subject || "Your conversation"}</span>
-                    <span className="gc-convo__time">{relativeShort(c.lastActivityAt || c.updatedAt)}</span>
-                  </div>
-                  <p className={c.unread ? "gc-convo__preview gc-convo__preview--unread" : "gc-convo__preview"}>
-                    {c.previewAuthor ? <strong>{c.previewAuthor}:</strong> : null} {c.preview || "—"}
-                  </p>
-                  <div className="gc-convo__meta">
-                    <StatusPill status={c.state === "closed" ? "closed" : "open"} />
-                    {c.unread ? <UnreadCount count={c.unread} /> : null}
-                  </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
 
             {shown.length === 0 ? (
               <div className="gc-state">
@@ -221,12 +241,18 @@ function ConversationsList({ conversations, config, failed, load, open, onNew })
               </div>
             ) : null}
 
-            <div className="gc-listfoot">
-              <div className="gc-teamcard">
-                <AvatarStack people={team.length ? team : [{ name: "Support" }]} />
-                <span>{teamOnline ? "Team is online now" : `Team is away — ${assistant} can still help`}</span>
+            {teamKnown ? (
+              <div className="gc-listfoot">
+                <div className="gc-teamcard">
+                  {team.length ? <AvatarStack people={team} /> : null}
+                  <span>
+                    {config.teamOnline
+                      ? "The team is online"
+                      : `The team is away${assistant ? ` — ${assistant} can still help` : ""}`}
+                  </span>
+                </div>
               </div>
-            </div>
+            ) : null}
           </>
         )}
       </div>
@@ -236,108 +262,147 @@ function ConversationsList({ conversations, config, failed, load, open, onNew })
 
 function ThreadScreen({
   conversationId,
+  conversation,
   initialBody,
   getApi,
   config,
+  liveTick,
+  syncTick,
+  sessionKey,
+  visible,
   onBack,
   onSeen,
   onConversationsChanged,
 }) {
-  const [state, setState] = useState({ status: "loading", conversation: null, messages: [] });
+  const [state, setState] = useState({ status: "loading", messages: [], hasOlder: false });
+  const [reloadKey, setReloadKey] = useState(0);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [draft, setDraft] = useState(initialBody);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [typing, setTyping] = useState(false);
+  const [sendError, setSendError] = useState("");
   const [rating, setRating] = useState(null);
   const threadRef = useRef(null);
 
-  const assistant = config?.assistantName || "Aria";
-
-  const load = useCallback(() => {
-    Promise.all([getApi()?.conversations?.(), getApi()?.messages?.(conversationId)])
-      .then(([rows, messages]) => {
-        const conversation = (rows ?? []).find((c) => c.id === conversationId) ?? null;
-        onSeen?.();
-        getApi()?.markRead?.(conversationId).catch(() => {});
-        setState({ status: "done", conversation, messages: messages ?? [] });
+  // Latest page on open, on every realtime notification for this thread, on resume and after a re-boot.
+  useEffect(() => {
+    const api = getApi();
+    if (!api) return undefined;
+    let active = true;
+    api
+      .messages(conversationId)
+      .then((rows) => {
+        if (!active) return;
+        const page = Array.isArray(rows) ? rows : [];
+        setState((s) => ({
+          status: "done",
+          messages: mergeMessages(s.messages, page),
+          hasOlder: s.status === "done" ? s.hasOlder : page.length >= PAGE_SIZE,
+        }));
       })
-      .catch(() => setState((s) => ({ ...s, status: "failed" })));
-  }, [conversationId, getApi, onSeen]);
+      .catch(() => {
+        if (active) setState((s) => (s.status === "done" ? s : { ...s, status: "failed" }));
+      });
+    return () => {
+      active = false;
+    };
+  }, [conversationId, getApi, liveTick, syncTick, sessionKey, reloadKey]);
 
-  useEffect(load, [load]);
+  const loaded = state.status === "done";
+  const newestId = state.messages.length ? state.messages[state.messages.length - 1].id : null;
 
-  // Keep the newest message in view as the thread grows.
+  // On screen means read: clear the unread count and mark it server-side whenever something new lands.
+  useEffect(() => {
+    if (visible && loaded) onSeen?.(conversationId);
+  }, [visible, loaded, newestId, conversationId, onSeen]);
+
+  // Keep the newest message in view as the thread grows (not when an earlier page is prepended).
   useEffect(() => {
     const el = threadRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [state.messages?.length, typing, rating]);
+  }, [newestId, rating]);
 
-  // Typing dots while the other end composes; the demo signal flips shortly
-  // after the visitor sends so the state is exercised end to end.
-  useEffect(() => {
-    if (!state.messages?.length) return undefined;
-    const last = state.messages[state.messages.length - 1];
-    if (authorKind(last?.authorRole) !== "visitor") return undefined;
-    const on = setTimeout(() => setTyping(true), 300);
-    const off = setTimeout(() => setTyping(false), 3800);
-    return () => {
-      clearTimeout(on);
-      clearTimeout(off);
-    };
-  }, [state.messages?.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  async function loadOlder() {
+    const api = getApi();
+    const cursor = cursorOf(state.messages.find((m) => !isOptimistic(m))?.createdAt);
+    if (!api || !cursor || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const rows = await api.messages(conversationId, cursor);
+      const page = Array.isArray(rows) ? rows : [];
+      setState((s) => ({ ...s, messages: mergeMessages(s.messages, page), hasOlder: page.length >= PAGE_SIZE }));
+    } catch {
+      // The button stays so the visitor can try again.
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
 
-  async function send(text) {
+  async function send(text, { attachments = [], fromComposer = true } = {}) {
     const trimmed = (text ?? "").trim();
-    if (!trimmed || sending) return;
+    const api = getApi();
+    if (!trimmed || sending || !api) return;
     setSending(true);
+    setSendError("");
     const optimistic = {
-      id: `optimistic-${Date.now()}`,
+      id: optimisticId(),
       authorRole: "customer",
       authorName: "",
       body: trimmed,
-      attachments: [],
+      attachments,
       createdAt: new Date().toISOString(),
     };
-    setState((s) => ({ ...s, messages: [...(s.messages ?? []), optimistic] }));
-    setDraft("");
+    setState((s) => ({ ...s, messages: [...s.messages, optimistic] }));
+    if (fromComposer) setDraft("");
     try {
-      const saved = await getApi().sendMessage(conversationId, trimmed, []);
+      const res = await api.sendMessage(conversationId, trimmed, attachments);
+      const saved = res?.message?.id ? res.message : res?.id ? res : null;
       setState((s) => ({
         ...s,
-        messages: s.messages.map((m) => (m.id === optimistic.id ? saved : m)),
-        conversation: s.conversation
-          ? { ...s.conversation, lastActivityAt: new Date().toISOString() }
-          : s.conversation,
+        messages: mergeMessages(
+          s.messages.filter((m) => m.id !== optimistic.id),
+          saved ? [saved] : [],
+        ),
       }));
+      if (!saved) setReloadKey((n) => n + 1);
       onConversationsChanged?.();
     } catch {
-      setState((s) => ({ ...s, messages: (s.messages ?? []).filter((m) => m.id !== optimistic.id) }));
-      setDraft(trimmed);
+      setState((s) => ({ ...s, messages: s.messages.filter((m) => m.id !== optimistic.id) }));
+      if (fromComposer) setDraft(trimmed);
+      setSendError("Message not sent. Check your connection and try again.");
     } finally {
       setSending(false);
     }
   }
 
   async function upload(file) {
-    if (!file || uploading) return;
+    const api = getApi();
+    if (!file || uploading || !api) return;
     setUploading(true);
+    setSendError("");
     try {
-      const result = await getApi().upload(await stripMetadata(file));
-      await send(`${file.name} — ${result.url ?? ""}`);
+      const result = await api.upload(await stripMetadata(file));
+      const url = safeHref(result?.url);
+      if (!url) throw new Error("upload_failed");
+      // The send route accepts back exactly what /upload returned for this session.
+      const name = result?.name || file.name || "Attachment";
+      const attachment = { url, name, size: result?.size ?? file.size, contentType: result?.contentType ?? file.type };
+      await send(name, { attachments: [attachment], fromComposer: false });
     } catch {
-      // The composer keeps its text; a failed upload simply doesn't attach.
+      setSendError("Couldn't upload that file. Images and PDFs up to 10 MB work.");
     } finally {
       setUploading(false);
     }
   }
 
-  const conv = state.conversation;
-  const closed = conv?.state === "closed";
-  const handedOver = conv?.state === "human" || Boolean(conv?.handedOverAt);
-  const aiThread = !handedOver && (conv?.aiOnly ?? false);
+  const assistant = config?.assistantName || "";
+  const closed = conversation?.state === "closed";
+  const handedOver = conversation?.state === "human" || Boolean(conversation?.handedOverAt);
+  const aiThread = Boolean(assistant) && !handedOver && Boolean(conversation?.aiOnly);
+  const lastAgent = [...state.messages].reverse().find((m) => authorKind(m.authorRole) === "agent");
   const person = {
-    name: aiThread ? assistant : conv?.agentName || "Support",
-    role: closed ? "Closed" : handedOver ? "Support · typically 2m" : "Answers in seconds",
+    name: aiThread ? assistant : conversation?.agentName || lastAgent?.authorName || config?.name || "Support",
+    role: closed ? "Closed" : aiThread ? "AI assistant" : config?.officeHoursNote || "The team will reply here",
   };
 
   return (
@@ -355,7 +420,7 @@ function ThreadScreen({
               <Sparkles size={14} />
             </div>
           ) : (
-            <Avatar name={person.name} showStatus online />
+            <Avatar name={person.name} showStatus online={config?.teamOnline === true} />
           )}
           <div className="gc-header__ident">
             <div className="gc-header__identtop">
@@ -368,7 +433,7 @@ function ThreadScreen({
             <button
               type="button"
               className="gc-ghostbtn"
-              onClick={() => send("I'd like to talk to a person, please.")}
+              onClick={() => send("I'd like to talk to a person, please.", { fromComposer: false })}
             >
               <User />
               Get a human
@@ -377,12 +442,15 @@ function ThreadScreen({
         </HeaderBar>
       )}
 
-      {handedOver && !closed ? <Banner tone="info">{assistant} handed this thread to a teammate</Banner> : null}
+      {handedOver && !closed && assistant ? (
+        <Banner tone="info">{assistant} handed this conversation to a teammate</Banner>
+      ) : null}
 
       <div
         ref={threadRef}
         className={aiThread && !closed ? "gc-thread" : "gc-thread gc-thread--tight"}
         role="log"
+        aria-live="polite"
         aria-label={`Conversation with ${person.name}`}
       >
         {state.status === "loading" ? (
@@ -392,38 +460,30 @@ function ThreadScreen({
             title="Couldn't load this conversation"
             onRetry={() => {
               setState((s) => ({ ...s, status: "loading" }));
-              load();
+              setReloadKey((n) => n + 1);
             }}
           />
         ) : state.messages.length === 0 ? (
           <div className="gc-state">
             <p className="gc-state__title">Say hello</p>
-            <p className="gc-state__hint">Your team will reply right here.</p>
+            <p className="gc-state__hint">The team will reply right here.</p>
           </div>
         ) : (
           <>
-            {conv?.createdAt ? (
+            {state.hasOlder ? (
+              <button type="button" className="gc-textbtn" onClick={loadOlder} disabled={loadingOlder}>
+                {loadingOlder ? "Loading…" : "Show earlier messages"}
+              </button>
+            ) : conversation?.createdAt ? (
               <div className="gc-daymark">
-                {new Date(conv.createdAt).toLocaleDateString([], { month: "short", day: "numeric" })}{" "}
-                {formatTime(conv.createdAt)}
+                {new Date(conversation.createdAt).toLocaleDateString([], { month: "short", day: "numeric" })}{" "}
+                {formatTime(conversation.createdAt)}
               </div>
             ) : null}
 
             {state.messages.map((m) => (
-              <MessageRow key={m.id} message={m} />
+              <MessageRow key={m.id} message={m} assistant={assistant} />
             ))}
-
-            {typing ? (
-              <div className="gc-msgrow gc-msgrow--typing">
-                <Avatar name={person.name} size="sm" />
-                <div className="gc-typing" aria-hidden="true">
-                  <span className="gc-dot" />
-                  <span className="gc-dot" />
-                  <span className="gc-dot" />
-                </div>
-                <span className="gc-typing__label">{person.name} is typing</span>
-              </div>
-            ) : null}
 
             {closed && !rating ? (
               <RatingCard
@@ -440,6 +500,8 @@ function ThreadScreen({
         )}
       </div>
 
+      {sendError ? <Banner tone="warn">{sendError}</Banner> : null}
+
       {closed ? null : (
         <Composer
           placeholder={aiThread ? "Message…" : `Message ${person.name.split(" ")[0]}…`}
@@ -449,7 +511,7 @@ function ThreadScreen({
           onValueChange={setDraft}
           sending={sending}
           uploading={uploading}
-          onSend={send}
+          onSend={(text) => send(text)}
           onAttach={upload}
         />
       )}
@@ -457,7 +519,7 @@ function ThreadScreen({
   );
 }
 
-function MessageRow({ message }) {
+function MessageRow({ message, assistant }) {
   const kind = authorKind(message.authorRole);
   const files = message.attachments || [];
 
@@ -472,19 +534,17 @@ function MessageRow({ message }) {
   if (kind === "visitor") {
     return (
       <div className="gc-sent">
-        {message.body ? (
-          <div className="gc-bubble gc-bubble--user">
-            <MarkdownView text={message.body} />
-            <Attachments files={files} />
-          </div>
-        ) : (
-          <div className="gc-bubble gc-bubble--user">
-            <Attachments files={files} />
-          </div>
-        )}
+        <div className="gc-bubble gc-bubble--user">
+          {message.body ? <MarkdownView text={message.body} /> : null}
+          <Attachments files={files} />
+        </div>
         <span className="gc-receipt">
-          {message.readAt ? `Read ${formatTime(message.readAt)}` : formatTime(message.createdAt)}
-          <CheckCheck />
+          {isOptimistic(message)
+            ? "Sending…"
+            : message.readAt
+              ? `Read ${formatTime(message.readAt)}`
+              : formatTime(message.createdAt)}
+          {isOptimistic(message) ? null : <CheckCheck />}
         </span>
       </div>
     );
@@ -503,22 +563,38 @@ function MessageRow({ message }) {
     );
   }
 
+  // AI replies are always labelled as AI in the thread itself (spec §13, EU AI Act Art. 50).
   return (
-    <div className="gc-bubble">
-      <MarkdownView text={message.body} />
-      <Attachments files={files} />
+    <div className="gc-msgrow">
+      <div className="gc-avatar gc-avatar--sm" aria-hidden="true">
+        <Sparkles size={12} />
+      </div>
+      <div className="gc-bubble gc-bubble--agent">
+        <MarkdownView text={message.body} />
+        <Attachments files={files} />
+        <span className="gc-row-meta">
+          <span className="gc-bubble__time">
+            {message.authorName || assistant || "AI assistant"} · {formatTime(message.createdAt)}
+          </span>
+          <AiBadge />
+          <span className="gc-sr">This reply was written by AI.</span>
+        </span>
+      </div>
     </div>
   );
 }
 
 function Attachments({ files }) {
-  if (!files?.length) return null;
+  const links = (files || [])
+    .map((a) => ({ href: safeHref(a?.url), name: typeof a?.name === "string" ? a.name : "" }))
+    .filter((a) => a.href);
+  if (!links.length) return null;
   return (
     <ul className="gc-bubble__files">
-      {files.map((a) => (
-        <li key={a.url}>
-          <a href={a.url} target="_blank" rel="noopener noreferrer nofollow">
-            {a.name || a.url}
+      {links.map((a, i) => (
+        <li key={`${a.href}-${i}`}>
+          <a href={a.href} target="_blank" rel="noopener noreferrer nofollow">
+            {a.name || "Attachment"}
           </a>
         </li>
       ))}

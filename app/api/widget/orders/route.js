@@ -1,11 +1,11 @@
-// GET /api/widget/orders — recent orders for the signed-in contact. Surfaces
-// under the New Conversation "Which order?" picker.
+// GET /api/widget/orders — recent orders for the signed-in contact (New Conversation "Which order?" picker).
+// Anonymous visitors have no orders: the list is empty and the widget should hide the picker.
 
 import { errorResponse, jsonResponse } from "@/lib/widget/respond";
 import { requirePrincipal } from "@/lib/widget/auth";
 import { isWidgetApiConfigured } from "@/lib/widget/service";
 import { getAppById } from "@/lib/widget/apps";
-import { serviceClient } from "@/lib/widget/service";
+import { listContactOrders } from "@/lib/widget/data";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,23 +18,7 @@ export async function GET(request) {
   const app = await getAppById(principal.appId);
   if (!app) return errorResponse(404, "app_not_found");
 
-  // Orders hang off the contact — anonymous visitors see the demo two from
-  // the channel seed so the New Conversation flow has something to pick.
-  let rows = [];
-  if (principal.contactId) {
-    const { data, error } = await serviceClient()
-      .from("orders")
-      .select("id, reference, title, status, items:order_items(count)")
-      .eq("contact_id", principal.contactId)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false })
-      .limit(8);
-    if (error) console.error("[widget.orders]", error.message);
-    rows = data ?? [];
-  } else {
-    rows = DEMO_ORDERS;
-  }
-
+  const rows = principal.contactId ? await listContactOrders(principal.contactId) : [];
   return jsonResponse({
     orders: rows.map((o) => ({
       id: o.id,
@@ -45,8 +29,3 @@ export async function GET(request) {
     })),
   });
 }
-
-const DEMO_ORDERS = [
-  { id: "demo-1", reference: "48120", title: "Blender, 2 items", status: "Out for delivery today", items: 2 },
-  { id: "demo-2", reference: "47903", title: "Kettle", status: "Delivered 12 Aug", items: 1 },
-];

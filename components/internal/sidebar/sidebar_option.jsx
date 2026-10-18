@@ -28,9 +28,13 @@ export function SidebarOption({
   onToggle,
   activeSubTab,
   iconColor,
+  subBadges,
 }) {
   const { state, isMobile } = useSidebar();
   const isCollapsed = state === "collapsed" && !isMobile;
+  // A folded group surfaces its children's badges on the parent row so they're never hidden.
+  const childBadges = (subItems || []).map((sub) => subBadges?.[sub.title]).filter(Boolean);
+  const groupBadge = subItems && !isExpanded && childBadges.length > 0 ? childBadges.join(" · ") : null;
 
   const activeIconColor = iconColor || "text-foreground";
   const inactiveIconColor = iconColor || "text-sidebar-foreground/70";
@@ -63,10 +67,16 @@ export function SidebarOption({
           />
         )}
         {!isCollapsed && <span>{title}</span>}
+        {groupBadge && !isCollapsed ? (
+          <span className="ml-auto rounded-full border border-border bg-surface-active px-1.5 text-[10px] font-medium leading-4 text-foreground tabular-nums">
+            {groupBadge}
+          </span>
+        ) : null}
         {subItems && !isCollapsed && (
           <ChevronDown
             className={cn(
-              "ml-auto w-4 h-4 transition-transform duration-200",
+              "w-4 h-4 transition-transform duration-200",
+              !groupBadge && "ml-auto",
               isExpanded && "rotate-180",
             )}
           />
@@ -107,6 +117,14 @@ export function SidebarOption({
                   />
                 )}
                 <p className="">{sub.title}</p>
+                {subBadges?.[sub.title] ? (
+                  <span
+                    className="ml-auto rounded-full border border-border bg-surface-active px-1.5 text-[10px] font-medium leading-4 text-foreground tabular-nums"
+                    aria-label={`${subBadges[sub.title]} unread`}
+                  >
+                    {subBadges[sub.title]}
+                  </span>
+                ) : null}
               </Button>
             </li>
           ))}
@@ -143,10 +161,14 @@ export function SidebarOption({
                         )}
                       />
                     )}
+                    {subBadges?.[sub.title] ? (
+                      <span className="pointer-events-none absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+                    ) : null}
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="right" align="center">
                   {sub.title}
+                  {subBadges?.[sub.title] ? ` · ${subBadges[sub.title]} unread` : ""}
                 </TooltipContent>
               </Tooltip>
             </li>

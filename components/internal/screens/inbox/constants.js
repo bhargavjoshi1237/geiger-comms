@@ -25,6 +25,25 @@ export const CHANNEL_FILTER_OPTIONS = CONVERSATION_CHANNELS.map((c) => ({
   label: c,
 }));
 
+// Connected-channel kind → the conversations.channel display text (Channels spec §2.1: set both).
+const KIND_DISPLAY_CHANNEL = {
+  email: "Email",
+  messenger: "Chat",
+  whatsapp: "WhatsApp",
+  sms: "SMS",
+  slack: "Slack",
+};
+const SOCIAL_NETWORK_CHANNEL = { instagram: "Instagram", facebook: "Facebook", x: "X" };
+
+export function displayChannelFor(channel) {
+  if (!channel) return "Chat";
+  if (channel.kind === "social") {
+    const network = Array.isArray(channel.accounts) ? channel.accounts[0]?.network : null;
+    return SOCIAL_NETWORK_CHANNEL[network] ?? "Instagram";
+  }
+  return KIND_DISPLAY_CHANNEL[channel.kind] ?? "Chat";
+}
+
 export const PRIORITY_FILTER_OPTIONS = [
   { value: "Urgent", label: "Urgent" },
   { value: "Normal", label: "Normal" },
@@ -52,6 +71,7 @@ export function defaultFilter() {
     status: [],
     channel: [],
     priority: [],
+    channelId: null,
     assignee: null,
     tagIds: [],
     unread: null,
@@ -60,14 +80,21 @@ export function defaultFilter() {
   };
 }
 
-// Client-side mirror of comms.list_conversations' predicate — used by realtime
-// handlers to drop rows that just left the active filter (spec §5.4).
-export function matchesFilter(conversation, filter, teammateId) {
+// Client mirror of comms.filter_conversations for realtime rows (spec §5.4); `extras` = { tagIds, mentionIds }, an unknown extra skips its check.
+export function matchesFilter(conversation, filter, teammateId, extras = {}) {
   if (!conversation) return false;
   const f = { ...defaultFilter(), ...filter };
   if (f.status?.length && !f.status.includes(conversation.status)) return false;
   if (f.channel?.length && !f.channel.includes(conversation.channel)) return false;
   if (f.priority?.length && !f.priority.includes(conversation.priority)) return false;
+  const channelIds = [].concat(f.channelId ?? []).filter(Boolean);
+  if (channelIds.length && !channelIds.includes(conversation.channelId)) return false;
+  if (f.tagIds?.length && Array.isArray(extras.tagIds)) {
+    if (!f.tagIds.some((id) => extras.tagIds.includes(id))) return false;
+  }
+  if (f.mentioned === true && extras.mentionIds instanceof Set) {
+    if (!extras.mentionIds.has(conversation.id)) return false;
+  }
   if (f.assignee === "me") {
     if (!teammateId || conversation.assigneeId !== teammateId) return false;
   } else if (f.assignee === "unassigned") {

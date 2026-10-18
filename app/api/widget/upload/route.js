@@ -1,23 +1,18 @@
-// POST /api/widget/upload — attachment upload (spec §10.7).
-//
-// Allowlisted content types verified against magic bytes and a 10 MB cap; the
-// declared mime is never trusted. Files land in the comms-widget bucket
-// (20260822051915_widget_upload.sql) stored as application/octet-stream so an
-// uploaded file can never execute or inline-render — it only ever downloads.
-// Images are re-encoded in the iframe before upload (components/widget/image),
-// which strips EXIF; this route never trusts that alone — the octet-stream
-// serving policy above is the real boundary.
+// POST /api/widget/upload — attachment upload (spec §10.7), multipart field "file".
+// Allowlisted types verified by magic bytes, 10 MB cap, metadata stripped server-side, stored as application/octet-stream so a file
+// only ever downloads. Returns { url, name, size, contentType }: pass that object back in a message's attachments to send it.
 
 import { errorResponse, jsonResponse } from "@/lib/widget/respond";
 import { requirePrincipal } from "@/lib/widget/auth";
 import { serviceClient, isWidgetApiConfigured } from "@/lib/widget/service";
-import { rateLimit } from "@/lib/widget/ratelimit";
+import { clientIp, ownerKey, rateLimitAll } from "@/lib/widget/ratelimit";
+import { ATTACHMENT_BUCKET, ATTACHMENT_TYPES, attachmentDir, cleanFileName, publicUrlFor } from "@/lib/widget/attachments";
+import { stripImageMetadata } from "@/lib/widget/strip_metadata";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_BYTES = 10 * 1024 * 1024;
-const BUCKET = "comms-widget";
 
 const ALLOWED_TYPES = {
   "image/png": { ext: "png", magic: [0x89, 0x50, 0x4e, 0x47] },
@@ -45,9 +40,19 @@ export async function POST(request) {
   const principal = await requirePrincipal(request);
   if (!principal) return errorResponse(401, "invalid_token");
 
-  if (!rateLimit(`upload:${principal.sid}`, 10, 60_000)) {
-    return errorResponse(429, "rate_limited");
-  }
+  const allowed = rateLimitAll([
+    [`upload:sid:${principal.sid}`, 10, 60_000],
+    [`upload:owner:${ownerKey(principal)}`, 10, 60_000],
+    [`upload:ip:${clientIp(request)}`, 30, 60_000],
+  ]);
+  if (!allowed) return errorResponse(429, "rate_limited");
+
+  const dir = attachmentDir(principal);
+  if (!dir) return errorResponse(401, "invalid_token");
+
+  // Refuse oversized bodies before buffering the multipart form.
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BYTES + 64 * 1024) return errorResponse(413, "too_large");
 
   let form;
   try {
@@ -63,21 +68,26 @@ export async function POST(request) {
   const spec = sniffType(header, file.type);
   if (!spec) return errorResponse(415, "unsupported_type");
 
+  // EXIF/XMP/IPTC never reach storage; a file the stripper cannot parse is refused, not stored as-is.
+  const bytes = stripImageMetadata(Buffer.from(await file.arrayBuffer()), spec.ext);
+  if (!bytes) return errorResponse(415, "unsupported_type");
+
   try {
-    const owner = principal.visitorId ?? principal.contactId ?? "anon";
-    const path = `${principal.appId}/${owner}/${crypto.randomUUID()}.${spec.ext}`;
-    const bytes = Buffer.from(await file.arrayBuffer());
+    const path = `${dir}/${crypto.randomUUID()}.${spec.ext}`;
     // octet-stream on purpose — downloads only, never inline-rendered.
     const uploaded = await serviceClient()
-      .storage.from(BUCKET)
+      .storage.from(ATTACHMENT_BUCKET)
       .upload(path, bytes, { contentType: "application/octet-stream", cacheControl: "3600" });
     if (uploaded.error) {
       console.error("[widget.upload]", uploaded.error.message);
       return errorResponse(500, "write_failed");
     }
-    const url = serviceClient().storage.from(BUCKET).getPublicUrl(path).data?.publicUrl;
+    const url = publicUrlFor(path);
     if (!url) return errorResponse(500, "sign_failed");
-    return jsonResponse({ url, size: bytes.length }, 201);
+    return jsonResponse(
+      { url, name: cleanFileName(file.name, spec.ext), size: bytes.length, contentType: ATTACHMENT_TYPES[spec.ext] },
+      201,
+    );
   } catch (e) {
     console.error("[widget.upload]", e);
     return errorResponse(500, "write_failed");

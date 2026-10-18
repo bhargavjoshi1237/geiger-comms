@@ -1,10 +1,9 @@
 "use client";
 
-// Create-only ticket dialog. Editing a ticket happens in the full-page editor
-// (ticket_detail.jsx), so this only ever mints a new one — either from a thread
-// (pass `conversation`) or standalone from the Tickets queue (pass `open`).
+// Create-only ticket dialog: from a thread (pass `conversation`) or standalone from the Tickets queue (pass `open`); editing lives in ticket_detail.jsx.
 
 import { useState } from "react";
+import { Loader2 } from "lucide-react";
 import {
   Button,
   Dialog,
@@ -117,9 +116,11 @@ export function TicketDialog({ conversation, open, onCancel, onCreate }) {
           </Button>
           <Button
             type="button"
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
             disabled={!title.trim() || busy}
             onClick={() => void submit()}
           >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             Create
           </Button>
         </DialogFooter>

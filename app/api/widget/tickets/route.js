@@ -1,5 +1,4 @@
-// GET /api/widget/tickets — the caller's tickets, joined through their own
-// conversations.
+// GET /api/widget/tickets — the caller's customer tickets, joined through their own live conversations.
 
 import { errorResponse, jsonResponse } from "@/lib/widget/respond";
 import { requirePrincipal } from "@/lib/widget/auth";

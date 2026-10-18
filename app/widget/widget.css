@@ -621,29 +621,59 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 9px 0 10px;
+  gap: 3px;
+  padding: 7px 0 8px;
   border: none;
   background: transparent;
   color: var(--gc-text-secondary);
   font: 500 10px var(--gc-font-sans);
-  position: relative;
+  transition: color 0.15s ease;
 }
 
 .gc-tab:hover {
   color: var(--gc-foreground);
 }
 
+/* The active tab is marked by a soft pill behind its icon, not a line. */
+.gc-tab__icon {
+  position: relative;
+  display: flex;
+  width: 44px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  transition: background-color 0.15s ease;
+}
+
+.gc-tab:hover .gc-tab__icon {
+  background: var(--gc-surface-hover);
+}
+
 .gc-tab[aria-selected="true"] {
   color: var(--gc-foreground);
   font-weight: 600;
-  box-shadow: inset 0 -2px 0 var(--gc-foreground);
 }
 
+.gc-tab[aria-selected="true"] .gc-tab__icon {
+  background: var(--gc-surface-strong);
+}
+
+/* Keyboard focus rings the pill rather than the whole tab cell. */
+.gc-tab:focus-visible {
+  outline: none;
+}
+
+.gc-tab:focus-visible .gc-tab__icon {
+  outline: 2px solid var(--gc-ring);
+  outline-offset: 1px;
+}
+
+/* Anchored to the icon pill's top-right. */
 .gc-tab__badge {
   position: absolute;
-  top: 7px;
-  left: calc(50% + 8px);
+  top: -4px;
+  left: calc(50% + 6px);
   min-width: 15px;
   height: 15px;
   padding: 0 4px;
@@ -2425,6 +2455,14 @@
   margin: 0;
   font: 400 12px/1.5 var(--gc-font-sans);
   color: var(--gc-text-secondary);
+}
+
+/* The loading line under the animated mark: the panel's own type, sized to read as a status, not a footnote. */
+.gc-boot p.gc-boot__label {
+  margin-top: 6px;
+  font: 500 15px/1.4 var(--gc-font-sans);
+  letter-spacing: -0.011em;
+  color: var(--gc-foreground);
 }
 
 /* The brand mark, sat on the launcher's own white disc so booting looks like

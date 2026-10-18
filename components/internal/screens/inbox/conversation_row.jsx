@@ -3,7 +3,7 @@
 // One row in the conversation list pane. Presentational — everything arrives
 // via props from InboxShell (spec §4.2).
 
-import { memo } from "react";
+import { memo, useEffect, useRef } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@geiger/ui";
 import { CheckCheck, Pin } from "lucide-react";
 import { StatusPill } from "@/components/internal/shared/screen_kit";
@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import {
   CONVERSATION_STATUS_MAP,
   PRIORITY_META,
+  TAG_COLOR_MAP,
 } from "./constants";
 
 function initials(name) {
@@ -24,19 +25,30 @@ function initials(name) {
 export const ConversationRow = memo(function ConversationRow({
   conversation,
   active,
+  focused,
   onSelect,
 }) {
   const priority = PRIORITY_META[conversation.priority] || PRIORITY_META.Normal;
   const PriorityIcon = priority.icon;
+  const tags = conversation.tags || [];
+  const ref = useRef(null);
+
+  // Keep the j/k keyboard cursor visible as it moves.
+  useEffect(() => {
+    if (focused) ref.current?.scrollIntoView({ block: "nearest" });
+  }, [focused]);
 
   return (
     <button
+      ref={ref}
       type="button"
+      data-conversation-row=""
       onClick={() => onSelect?.(conversation.id)}
       aria-current={active ? "true" : undefined}
       className={cn(
         "flex w-full gap-3 border-b border-border px-4 py-3 text-left transition-colors last:border-b-0",
         active ? "bg-surface-active" : "hover:bg-surface-hover",
+        focused && "ring-1 ring-inset ring-border-strong",
       )}
     >
       <Avatar className="mt-0.5 h-8 w-8 shrink-0">
@@ -90,6 +102,17 @@ export const ConversationRow = memo(function ConversationRow({
           {conversation.assignee ? (
             <span className="truncate text-[10px] text-text-tertiary">
               {conversation.assignee}
+            </span>
+          ) : null}
+          {tags.length > 0 ? (
+            <span
+              className={cn(
+                "max-w-[80px] truncate rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
+                TAG_COLOR_MAP[tags[0].color] || TAG_COLOR_MAP.slate,
+              )}
+            >
+              {tags[0].name}
+              {tags.length > 1 ? ` +${tags.length - 1}` : ""}
             </span>
           ) : null}
           <span className="ml-auto flex items-center gap-1 text-text-tertiary">

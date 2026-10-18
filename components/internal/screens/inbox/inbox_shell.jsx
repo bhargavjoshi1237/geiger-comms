@@ -1,65 +1,77 @@
 "use client";
 
-// The three-pane inbox frame. All shared state lives in useInboxShell — this
-// component is presentational glue: it renders the panes and dialogs and
-// takes props from the hook. Your Inbox / All Conversations / Mentions are
-// this component with a different starting filter — never three copies.
-//
-// Layout contract (the single most common bug): root is flex h-full min-h-0
-// and EVERY scrolling child carries min-h-0, so panes scroll instead of the
-// page growing.
+// The three-pane inbox frame; all shared state lives in useInboxShell and this component is presentational glue.
+// Layout contract: root is flex h-full min-h-0 and EVERY scrolling child carries min-h-0, so panes scroll instead of the page.
+// Below lg: one pane at a time (list, or the open thread with a back affordance); the contact panel becomes a sheet.
 
-import { Button } from "@geiger/ui";
+import { Sheet, SheetContent, SheetTitle } from "@geiger/ui";
+import { cn } from "@/lib/utils";
 import ConversationList from "./conversation_list";
 import ConversationThread from "./conversation_thread";
-import ContactPanel from "./contact_panel";
+import { ContactDetails, ContactPanel } from "./contact_panel";
 import NewConversationDialog from "./new_conversation_dialog";
 import { SignedOutNotice } from "./signed_out_notice";
 import { CustomSnoozeDialog } from "./custom_snooze_dialog";
 import { TicketDialog } from "./ticket_dialog";
-import { presetFilter, useInboxShell } from "./use_inbox_shell";
+import { ASSIGN_DENIED, CLOSE_DENIED, REPLY_DENIED, useInboxShell } from "./use_inbox_shell";
 
-export function InboxShell({ preset = "all", startFilter }) {
+const TITLES = { all: "All conversations", mine: "Your inbox", mentions: "Mentions" };
+
+export function InboxShell({ preset = "all", startFilter, title }) {
+  const shell = useInboxShell({ preset, startFilter });
   const {
+    projectId,
     conversationId,
     closeThread,
     canReply,
+    canAssign,
+    canClose,
     filter,
-    setFilter,
+    updateFilter,
+    clearFilters,
+    clearChannelFilter,
+    isFiltered,
+    activeChannel,
+    channels,
     page,
     teammates,
+    me,
     allTags,
-    mentionIds,
-    loading,
+    initialLoading,
+    refreshing,
     loadMore,
     threadLoading,
+    threadMissing,
     messages,
+    focusedId,
     newOpen,
     setNewOpen,
     customSnooze,
     setCustomSnooze,
     ticketDraft,
     setTicketDraft,
+    menu,
+    setMenu,
+    contactOpen,
+    setContactOpen,
     visibleRows,
     activeRow,
     selectConversation,
-    setFocusedId,
     handleAssign,
     handleSnooze,
     handleClose,
     handleReopen,
     handlePriority,
-    handleMarkUnread,
-    handleSetTags,
+    handleToggleRead,
+    handleToggleTag,
+    handleCreateTag,
     handleSend,
     handleCreateConversation,
     handleCreateTicket,
-    waitingOnIdentity,
     signedOut,
-  } = useInboxShell({ preset, startFilter });
+  } = shell;
 
-  // Signed-out gate (spec §5.6): Your Inbox and Mentions explain themselves;
-  // All Conversations still lists rows.
+  // Signed-out gate (spec §5.6): Your Inbox and Mentions explain themselves; All Conversations still lists rows.
   if (signedOut) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -68,80 +80,97 @@ export function InboxShell({ preset = "all", startFilter }) {
     );
   }
 
+  const threadOpen = Boolean(conversationId);
+  // A thread/contact is "loading" while its row is being resolved (first page or deep-link fetch).
+  const activeLoading = threadOpen && !activeRow && !threadMissing;
+  const contactProps = {
+    tags: allTags,
+    projectId,
+    onToggleTag: handleToggleTag,
+    onCreateTag: handleCreateTag,
+    onCreateTicket: (conversation) => setTicketDraft(conversation),
+  };
+
   return (
     <div className="flex h-full min-h-0 w-full">
-      {/* list pane */}
-      <div className="h-full min-h-0 w-[380px] shrink-0 max-lg:w-full">
+      {/* list pane — full width below lg unless a thread is open */}
+      <div className={cn("h-full min-h-0 w-full shrink-0 lg:block lg:w-[380px]", threadOpen ? "hidden" : "block")}>
         <ConversationList
-          loading={loading || waitingOnIdentity}
+          title={title ?? TITLES[preset] ?? TITLES.all}
+          preset={preset}
+          initialLoading={initialLoading}
+          refreshing={refreshing}
           error={page.failed}
           conversations={visibleRows}
           activeId={conversationId}
+          focusedId={focusedId}
           filter={filter}
+          isFiltered={isFiltered}
           teammates={teammates}
-          mentionIds={mentionIds}
+          tags={allTags}
+          activeChannel={activeChannel}
           hasMore={page.hasMore}
           onLoadMore={loadMore}
-          onSelect={(id) => selectConversation(id)}
-          onFilterChange={(next) => {
-            setFocusedId(null);
-            setFilter(next);
-          }}
-          onClearFilters={() => setFilter(presetFilter(preset))}
+          onSelect={selectConversation}
+          onFilterChange={updateFilter}
+          onClearFilters={clearFilters}
+          onClearChannel={clearChannelFilter}
           onNewConversation={() => setNewOpen(true)}
         />
       </div>
 
-      {/* thread pane */}
-      <div className="hidden h-full min-h-0 flex-1 flex-col lg:flex">
+      {/* thread pane — the only pane below lg while a thread is open */}
+      <div className={cn("h-full min-h-0 min-w-0 flex-1 flex-col lg:flex", threadOpen ? "flex" : "hidden")}>
         <ConversationThread
           conversation={activeRow}
           loading={threadLoading}
+          activeLoading={activeLoading}
+          missing={threadMissing}
           messages={messages}
           teammates={teammates}
+          me={me}
+          tags={allTags}
           canReply={canReply}
-          replyDisabledReason={
-            canReply
-              ? null
-              : "You don't have permission to reply (comms.conversation.reply)."
-          }
+          replyDisabledReason={canReply ? null : REPLY_DENIED}
+          assignDisabledReason={canAssign ? null : ASSIGN_DENIED}
+          closeDisabledReason={canClose ? null : CLOSE_DENIED}
+          canTrackRead={Boolean(me)}
+          menu={menu && activeRow && menu.id === activeRow.id ? menu.kind : null}
+          onMenuChange={(kind) => setMenu(kind && activeRow ? { kind, id: activeRow.id } : null)}
+          onBack={() => {
+            setContactOpen(false);
+            closeThread();
+          }}
+          onOpenContact={() => setContactOpen(true)}
           onSend={handleSend}
           onAssign={handleAssign}
           onSnooze={handleSnooze}
           onClose={handleClose}
           onReopen={handleReopen}
           onPriority={handlePriority}
-          onMarkUnread={handleMarkUnread}
-          onToggleTags={() => {}} // tags are edited in the contact panel picker
+          onToggleRead={handleToggleRead}
+          onToggleTag={handleToggleTag}
+          onCreateTag={handleCreateTag}
           onCreateTicket={(conversation) => setTicketDraft(conversation)}
         />
       </div>
 
-      {/* contact pane */}
-      <ContactPanel
-        conversation={activeRow}
-        tags={allTags}
-        onSetTags={handleSetTags}
-        onCreateTicket={(conversation) => setTicketDraft(conversation)}
-      />
+      {/* contact pane (lg+) */}
+      <ContactPanel conversation={activeRow} loading={activeLoading} {...contactProps} />
 
-      {/* below-lg back affordance over the thread */}
-      {conversationId ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={closeThread}
-          className="absolute left-2 top-2 z-20 h-auto bg-surface-card px-2 py-1 text-xs lg:hidden"
-        >
-          ← Back to list
-        </Button>
-      ) : null}
+      {/* contact sheet (below lg), opened from the thread header */}
+      <Sheet open={contactOpen && Boolean(activeRow)} onOpenChange={setContactOpen}>
+        <SheetContent side="right" className="w-[320px] overflow-y-auto border-border p-4 pt-10 lg:hidden">
+          <SheetTitle className="sr-only">Contact details</SheetTitle>
+          {activeRow ? <ContactDetails conversation={activeRow} {...contactProps} /> : null}
+        </SheetContent>
+      </Sheet>
 
       <NewConversationDialog
         open={newOpen}
         onOpenChange={setNewOpen}
         onCreate={handleCreateConversation}
+        channels={channels}
       />
 
       <CustomSnoozeDialog

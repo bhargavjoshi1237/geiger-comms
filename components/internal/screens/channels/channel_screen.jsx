@@ -1,14 +1,20 @@
 "use client";
 
-// The shared Channels list screen (channels spec §5.1), one per kind. Follows
-// the suite list pattern: header + connect, KPI bar, toolbar filters, a
-// DataTable of connections and pagination. Selecting a row opens the channel in
-// the URL (?channel=<id>) and swaps to the full-page editor — configuration
-// never happens inline on the list.
+// Shared Channels list screen (spec §5.1), one per kind; selecting a row opens it in the URL (?channel=<id>) and swaps to the editor.
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Copy, Loader2, Pencil, PlugZap, Trash2, Unplug } from "lucide-react";
+import {
+  AlertTriangle,
+  Copy,
+  MessagesSquare,
+  Pencil,
+  PlugZap,
+  RotateCw,
+  Trash2,
+  Unplug,
+} from "lucide-react";
 import {
   ActionMenu,
   Button,
@@ -18,6 +24,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  LogoLoading,
 } from "@geiger/ui";
 import { MainScreenWrapper } from "@/components/internal/shared/screen_wrappers";
 import {
@@ -34,10 +41,13 @@ import {
   Toolbar,
 } from "@/components/internal/shared/screen_kit";
 import FilterDropdown from "@/components/internal/screens/overview/filter_dropdown";
+import { useOptionalProject } from "@/context/project-context";
 import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
+import { tabToSlug } from "@/lib/workspace/tabs";
 import {
   countConversationsByChannel,
   createChannel,
+  isSimulatedKind,
   listChannelsByKind,
   softDeleteChannel,
   updateChannel,
@@ -48,34 +58,58 @@ import {
   CHANNEL_STATUS_FILTER_OPTIONS,
   CHANNEL_STATUS_MAP,
   formatDate,
+  isSimulated,
 } from "./constants";
 import { ConnectDialog } from "./connect_dialog";
-import { ChannelDetailScreen } from "./channel_detail";
+import { ChannelDetailScreen, statusToast } from "./channel_detail";
+import { SimulatedBadge } from "./simulated_badge";
+
+// All Conversations reads ?channel=<id> as its channel filter (Inbox contract); same path schema as useWorkspaceUrl.
+const CONVERSATIONS_TAB = "All Conversations";
+
+function conversationsHref(projectId, channelId) {
+  if (!projectId || !channelId) return null;
+  return `/project/${projectId}/${tabToSlug(CONVERSATIONS_TAB)}?channel=${encodeURIComponent(channelId)}`;
+}
 
 export function ChannelScreen({ kind }) {
   const meta = CHANNEL_KIND_META[kind];
+  // A live kind starts connected (a disconnected Messenger stops its widget); simulated kinds start disconnected.
+  const initialStatus = isSimulatedKind(kind) ? "disconnected" : "connected";
+  const router = useRouter();
+  const { projectId } = useOptionalProject() ?? {};
   const { channelId, openChannel, closeChannel } = useWorkspaceUrl();
 
   const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [counts, setCounts] = useState({});
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [connectOpen, setConnectOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
+  // null from the data layer is a failed read (error state); [] is a genuinely empty kind.
   useEffect(() => {
     let alive = true;
-    listChannelsByKind({ kind }).then((rows) => {
+    listChannelsByKind({ projectId, kind }).then((rows) => {
       if (!alive) return;
       setChannels(rows ?? []);
+      setLoadFailed(rows === null);
       setLoading(false);
     });
-    countConversationsByChannel({}).then((map) => alive && setCounts(map || {}));
+    countConversationsByChannel({ projectId }).then((map) => alive && setCounts(map || {}));
     return () => {
       alive = false;
     };
-  }, [kind]);
+  }, [kind, projectId, reloadKey]);
+
+  function retry() {
+    setLoading(true);
+    setLoadFailed(false);
+    setReloadKey((k) => k + 1);
+  }
 
   const selected = useMemo(
     () => (channelId ? channels.find((c) => c.id === channelId) || null : null),
@@ -106,12 +140,12 @@ export function ChannelScreen({ kind }) {
       {
         label: "Connections",
         value: String(channels.length),
-        footer: `${connected} connected`,
+        footer: `${connected} marked connected`,
       },
       {
         label: "Conversations",
         value: conversations.toLocaleString("en-US"),
-        footer: `Across all ${meta.label.toLowerCase()} channels`,
+        footer: `Linked to ${meta.label.toLowerCase()} channels`,
       },
       { label: "Needs attention", value: String(errored), footer: "In an error state" },
       {
@@ -122,6 +156,12 @@ export function ChannelScreen({ kind }) {
     ];
   }, [channels, counts, meta]);
 
+  const viewConversations = (channel) => {
+    const href = conversationsHref(projectId, channel.id);
+    if (href) router.push(href, { scroll: false });
+  };
+
+  // Resolves true once persisted so the connect dialog can close; false keeps it open.
   async function handleConnect({ name, config }) {
     const optimisticId = crypto.randomUUID();
     const user = await getUser();
@@ -129,30 +169,34 @@ export function ChannelScreen({ kind }) {
       id: optimisticId,
       kind,
       name,
-      status: "disconnected",
-      simulated: true,
+      status: initialStatus,
+      projectId: projectId ?? null,
       createdAt: new Date().toISOString(),
       ...(config || {}),
+      simulated: isSimulatedKind(kind),
     };
     setChannels((prev) => [...prev, optimistic]);
     const created = await createChannel({
       id: optimisticId,
       kind,
       name,
+      status: initialStatus,
       config: config || {},
+      projectId: projectId ?? null,
       createdBy: user?.id ?? null,
     });
     if (!created) {
       setChannels((prev) => prev.filter((c) => c.id !== optimisticId));
       toast.error(`Couldn't create the ${meta.label.toLowerCase()} channel`);
-      return;
+      return false;
     }
     setChannels((prev) => prev.map((c) => (c.id === created.id ? created : c)));
     toast.success(`${meta.label} channel created`);
     openChannel(created.id);
+    return true;
   }
 
-  // The editor lifts every edit back up so the list and the open row agree.
+  // The editor lifts every persisted edit back up so the list and the open row agree.
   const handleUpdate = (updated) =>
     setChannels((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
 
@@ -167,7 +211,7 @@ export function ChannelScreen({ kind }) {
       toast.error("Couldn't update the connection");
       return;
     }
-    toast.success(next === "connected" ? "Connected" : "Disconnected");
+    statusToast(next, isSimulated(channel));
   }
 
   async function handleDuplicate(channel) {
@@ -177,7 +221,7 @@ export function ChannelScreen({ kind }) {
       ...channel,
       id: optimisticId,
       name: `${channel.name} (copy)`,
-      status: "disconnected",
+      status: initialStatus,
       createdAt: new Date().toISOString(),
     };
     setChannels((prev) => [...prev, copy]);
@@ -185,9 +229,11 @@ export function ChannelScreen({ kind }) {
       id: optimisticId,
       kind,
       name: copy.name,
+      status: initialStatus,
       config: Object.fromEntries(
         meta.fields.map((f) => [f.key, channel[f.key]]).filter(([, v]) => v !== undefined),
       ),
+      projectId: projectId ?? null,
       createdBy: user?.id ?? null,
     });
     if (!created) {
@@ -232,11 +278,7 @@ export function ChannelScreen({ kind }) {
       render: (c) => (
         <div className="flex items-center gap-2">
           <StatusPill status={c.status} map={CHANNEL_STATUS_MAP} />
-          {c.simulated === false ? null : (
-            <span className="rounded-full border border-border bg-surface-hover px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-              Simulated
-            </span>
-          )}
+          <SimulatedBadge channel={c} />
         </div>
       ),
     },
@@ -266,6 +308,11 @@ export function ChannelScreen({ kind }) {
           label={`Actions for ${c.name}`}
           items={[
             { icon: Pencil, label: "Edit", onSelect: () => openChannel(c.id) },
+            projectId && {
+              icon: MessagesSquare,
+              label: "View conversations",
+              onSelect: () => viewConversations(c),
+            },
             {
               icon: c.status === "connected" ? Unplug : PlugZap,
               label: c.status === "connected" ? "Disconnect" : "Connect",
@@ -285,8 +332,7 @@ export function ChannelScreen({ kind }) {
     },
   ];
 
-  // Confirmation lives outside the list/editor branch so the editor's danger
-  // zone gets the same dialog the row action does.
+  // Lives outside the list/editor branch so the editor's danger zone gets the same confirmation.
   const deleteDialog = (
     <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
       <DialogContent className="sm:max-w-md">
@@ -295,17 +341,17 @@ export function ChannelScreen({ kind }) {
           <DialogDescription>
             Are you sure you want to delete{" "}
             <span className="font-medium text-foreground">{deleteTarget?.name}</span>
-            ? Existing conversations keep their history, but nothing new will route in.
+            ? Existing conversations keep their history.
+            {isSimulatedKind(kind)
+              ? null
+              : " Its installed widget stops loading on your site."}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="ghost" onClick={() => setDeleteTarget(null)}>
             Cancel
           </Button>
-          <Button
-            className="bg-red-500/90 text-white hover:bg-red-500"
-            onClick={() => handleDelete(deleteTarget)}
-          >
+          <Button variant="destructive" onClick={() => handleDelete(deleteTarget)}>
             <Trash2 className="h-4 w-4" /> Delete
           </Button>
         </DialogFooter>
@@ -317,9 +363,11 @@ export function ChannelScreen({ kind }) {
     return (
       <>
         <ChannelDetailScreen
+          key={selected.id}
           channel={selected}
           meta={meta}
           conversationCount={counts[selected.id] || 0}
+          conversationsHref={conversationsHref(projectId, selected.id)}
           onBack={closeChannel}
           onUpdate={handleUpdate}
           onDelete={setDeleteTarget}
@@ -337,6 +385,64 @@ export function ChannelScreen({ kind }) {
       <PlugZap className="h-4 w-4" /> Connect {meta.label}
     </Button>
   );
+
+  let body;
+  if (loading) {
+    body = (
+      <div className="flex items-center justify-center rounded-xl border border-border bg-surface-subtle px-6 py-16">
+        <LogoLoading size={48} aria-label={`Loading ${meta.label} channels`} />
+      </div>
+    );
+  } else if (loadFailed) {
+    body = (
+      <div className="rounded-xl border border-border bg-surface-subtle">
+        <EmptyState
+          icon={AlertTriangle}
+          title={`Couldn't load ${meta.label.toLowerCase()} channels`}
+          description="Check your connection and try again."
+          action={
+            <Button
+              variant="outline"
+              className="border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
+              onClick={retry}
+            >
+              <RotateCw className="h-4 w-4" /> Retry
+            </Button>
+          }
+        />
+      </div>
+    );
+  } else {
+    body = (
+      <div className="space-y-5">
+        <DataTable
+          columns={columns}
+          data={pager.pageItems}
+          getRowKey={(c) => c.id}
+          onRowClick={(c) => openChannel(c.id)}
+          empty={
+            <div className="rounded-xl border border-border bg-surface-subtle">
+              <EmptyState
+                icon={meta.icon}
+                title={
+                  channels.length
+                    ? "No channels match your filters"
+                    : `No ${meta.label.toLowerCase()} channels yet`
+                }
+                description={
+                  channels.length
+                    ? "Try clearing the search or status filter."
+                    : "Connect one to start configuring it."
+                }
+                action={connectButton}
+              />
+            </div>
+          }
+        />
+        <ListPagination {...pager} itemLabel="channels" />
+      </div>
+    );
+  }
 
   return (
     <MainScreenWrapper>
@@ -360,46 +466,14 @@ export function ChannelScreen({ kind }) {
         />
       </Toolbar>
 
-      {loading ? (
-        <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-subtle px-6 py-16 text-sm text-text-secondary">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading {meta.label} channels…
-        </div>
-      ) : (
-        <div className="space-y-5">
-          <DataTable
-            columns={columns}
-            data={pager.pageItems}
-            getRowKey={(c) => c.id}
-            onRowClick={(c) => openChannel(c.id)}
-            empty={
-              <div className="rounded-xl border border-border bg-surface-subtle">
-                <EmptyState
-                  icon={meta.icon}
-                  title={
-                    channels.length
-                      ? "No channels match your filters"
-                      : `No ${meta.label.toLowerCase()} channels yet`
-                  }
-                  description={
-                    channels.length
-                      ? "Try clearing the search or status filter."
-                      : "Connect one to start configuring it."
-                  }
-                  action={connectButton}
-                />
-              </div>
-            }
-          />
-          <ListPagination {...pager} itemLabel="channels" />
-        </div>
-      )}
+      {body}
 
       <ConnectDialog
         open={connectOpen}
         onOpenChange={setConnectOpen}
         meta={meta}
-        requiredField={meta.fields.find((f) => f.required)}
+        simulated={isSimulatedKind(kind)}
+        requiredFields={meta.fields.filter((f) => f.required)}
         onConnect={handleConnect}
       />
 

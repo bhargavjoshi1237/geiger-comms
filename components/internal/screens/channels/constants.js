@@ -1,7 +1,4 @@
-// Lookups & declarative config for the six Channels screens. CHANNEL_KIND_META
-// drives everything: the shared screen reads label/icon/blurb from it and the
-// config form renders straight from `fields`, so adding a field or kind is a
-// one-line change here (docs/specs/2026-08-22-channels-design.md §3).
+// Lookups & declarative config for the six Channels screens; the config form renders from CHANNEL_KIND_META[kind].fields (spec §3).
 
 import {
   Mail,
@@ -15,29 +12,29 @@ import {
 // Connection status -> badge styling for StatusPill.
 export const CHANNEL_STATUS_MAP = {
   connected: { label: "Connected", variant: "success", dotClass: "bg-emerald-400" },
-  disconnected: { label: "Disconnected", variant: "outline", dotClass: "bg-[#737373]" },
-  error: { label: "Error", variant: "destructive", dotClass: "bg-red-400" },
+  disconnected: { label: "Disconnected", variant: "outline", dotClass: "bg-text-tertiary" },
+  error: { label: "Error", variant: "danger", dotClass: "bg-red-400" },
 };
 
-// Field types the config form understands: text | textarea | select | switch |
-// color | accounts. `required` gates the connect/save validation.
+// Field types: text | textarea | select | switch | color | accounts; `required` gates connect and every later save.
 const ACCOUNT_NETWORKS = [
   { value: "instagram", label: "Instagram" },
   { value: "facebook", label: "Facebook" },
   { value: "x", label: "X" },
 ];
 
+// Blurbs say what is stored, never that messages flow — only Messenger is live (spec §1.1).
 export const CHANNEL_KIND_META = {
   email: {
     label: "Email",
     icon: Mail,
-    blurb: "Forward support emails into your inbox and reply from one place.",
+    blurb: "Settings for your support email addresses. Simulated — no email is received or sent.",
     fields: [
       { key: "address", label: "Email address", type: "text", placeholder: "support@acme.com", required: true },
-      { key: "forwardingAddress", label: "Forwarding address", type: "text", placeholder: "forward@in.acme.com", hint: "Point your provider's forwarding rule here." },
+      { key: "forwardingAddress", label: "Forwarding address", type: "text", placeholder: "forward@in.acme.com", hint: "Stored for reference — nothing is forwarded yet." },
       { key: "replyToName", label: "Reply-to name", type: "text", placeholder: "Acme Support" },
       { key: "signature", label: "Signature", type: "textarea", placeholder: "— The Acme team" },
-      { key: "verified", label: "Verified", type: "switch", hint: "Mark once the address ownership check passes." },
+      { key: "verified", label: "Verified", type: "switch", hint: "A manual marker — no ownership check runs." },
     ],
     summary: (config) => config?.address || "",
   },
@@ -67,7 +64,7 @@ export const CHANNEL_KIND_META = {
   whatsapp: {
     label: "WhatsApp",
     icon: MessageCircleMore,
-    blurb: "Chat with customers on WhatsApp Business.",
+    blurb: "Settings for a WhatsApp Business number. Simulated — no messages are received or sent.",
     fields: [
       { key: "phoneNumber", label: "Phone number", type: "text", placeholder: "+1 555 010 2030", required: true },
       { key: "displayName", label: "Display name", type: "text", placeholder: "Acme" },
@@ -79,7 +76,7 @@ export const CHANNEL_KIND_META = {
   sms: {
     label: "SMS",
     icon: Smartphone,
-    blurb: "Send and receive text messages from a shared number.",
+    blurb: "Settings for a shared SMS number. Simulated — no texts are received or sent.",
     fields: [
       { key: "number", label: "Number", type: "text", placeholder: "+1 555 010 4050", required: true },
       { key: "provider", label: "Provider", type: "text", placeholder: "Twilio" },
@@ -91,7 +88,7 @@ export const CHANNEL_KIND_META = {
   social: {
     label: "Social",
     icon: Share2,
-    blurb: "Manage Instagram, Facebook and X conversations together.",
+    blurb: "Settings for your Instagram, Facebook and X accounts. Simulated — no messages are received or sent.",
     fields: [{ key: "accounts", label: "Accounts", type: "accounts", options: ACCOUNT_NETWORKS }],
     summary: (config) => {
       const handles = (config?.accounts || []).map((a) => a.handle).filter(Boolean);
@@ -102,11 +99,11 @@ export const CHANNEL_KIND_META = {
   slack: {
     label: "Slack",
     icon: Slack,
-    blurb: "Answer questions from shared Slack channels.",
+    blurb: "Settings for a Slack workspace. Simulated — no Slack messages are received or sent.",
     fields: [
       { key: "workspaceName", label: "Workspace name", type: "text", placeholder: "acme.slack.com", required: true },
       { key: "defaultChannel", label: "Default channel", type: "text", placeholder: "#support" },
-      { key: "notifyOnAssign", label: "Notify assignee", type: "switch", hint: "DM the assignee when a thread needs them." },
+      { key: "notifyOnAssign", label: "Notify assignee", type: "switch", hint: "Stored only — no Slack DMs are sent yet." },
     ],
     summary: (config) => config?.defaultChannel || config?.workspaceName || "",
   },
@@ -132,6 +129,21 @@ export function configOf(meta, channel) {
   return config;
 }
 
+// Keys ("name" plus required config fields) left blank on a channel view model.
+export function missingRequired(meta, channel) {
+  const missing = [];
+  if (!String(channel?.name ?? "").trim()) missing.push("name");
+  for (const field of meta?.fields || []) {
+    if (field.required && !String(channel?.[field.key] ?? "").trim()) missing.push(field.key);
+  }
+  return missing;
+}
+
+// A missing flag counts as simulated — the badge only drops when a row says simulated: false.
+export function isSimulated(channel) {
+  return channel?.simulated !== false;
+}
+
 export function formatDate(value) {
   if (!value) return "";
   const d = new Date(value);
@@ -143,6 +155,10 @@ export function formatDate(value) {
   });
 }
 
-// The §1.1 honesty requirement: nothing connects to a real provider yet.
+// The §1.1 honesty requirement for every simulated kind.
 export const CONNECT_DISCLOSURE =
-  "This stores settings only — it does not connect to the provider and no messages flow through it yet.";
+  "This stores settings only. It does not connect to the provider, and no messages are received or sent through it.";
+
+// Messenger is the one live kind: conversations arrive through the installed widget.
+export const LIVE_NOTE =
+  "Live — conversations from your installed widget arrive in your inbox.";

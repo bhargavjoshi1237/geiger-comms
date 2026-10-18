@@ -1,10 +1,7 @@
 "use client";
 
-// Ask — the AI thread. The API answers with a card
-// ({ summary, steps, sources, followUps, topArticles }); the screen renders it
-// as one assistant bubble in the drawn thread, with the numbered steps and the
-// cited sources inside it, follow-ups as quick replies underneath, and the
-// standard composer with the AI disclosure note below the box.
+// Ask — the AI thread, reachable only when the server configures an assistant. Each answer card renders as one labelled AI bubble
+// (summary, steps, cited sources) with follow-ups as quick replies, and the composer carries the AI disclosure (spec §13).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -32,7 +29,7 @@ export function AskSpace({ getApi, config, route, navigate }) {
   const threadRef = useRef(null);
   const started = useRef(false);
 
-  const assistant = config?.assistantName || "Aria";
+  const assistant = config?.assistantName || "AI assistant";
 
   const run = useCallback(
     (id, query) => {
@@ -94,12 +91,7 @@ export function AskSpace({ getApi, config, route, navigate }) {
           type="button"
           className="gc-ghostbtn"
           onClick={() =>
-            navigate({
-              space: "messages",
-              newAbout: "other",
-              newLabel: "Something else",
-              draft: turns[turns.length - 1]?.question || "",
-            })
+            navigate({ space: "messages", compose: true, draft: turns[turns.length - 1]?.question || "" })
           }
         >
           <User />
@@ -110,7 +102,7 @@ export function AskSpace({ getApi, config, route, navigate }) {
       <div ref={threadRef} className="gc-thread" role="log" aria-label={`Conversation with ${assistant}`}>
         {turns.length === 0 && !pending ? (
           <div className="gc-bubble gc-bubble--sys">
-            Ask me anything about your order, a return or your account.
+            I&rsquo;m {assistant}, an AI assistant. Ask me a question and I&rsquo;ll look for an answer.
           </div>
         ) : null}
 
@@ -121,9 +113,8 @@ export function AskSpace({ getApi, config, route, navigate }) {
               <ErrorState
                 title={`${assistant} is offline`}
                 hint="A teammate can pick this up right now."
-                onRetry={() =>
-                  navigate({ space: "messages", newAbout: "other", draft: turn.question })
-                }
+                onRetry={() => navigate({ space: "messages", compose: true, draft: turn.question })}
+                retryLabel="Message the team"
               />
             ) : turn.answer ? (
               <>
@@ -190,6 +181,10 @@ function AnswerBody({ answer, onOpenArticle }) {
 
   return (
     <>
+      {/* Only a model-written answer is labelled AI; a help-centre match says where it came from instead. */}
+      <span className="gc-row-meta" style={{ marginTop: 0, marginBottom: 6 }}>
+        {answer.generatedByAi === true ? <AiBadge /> : <Cap>From the help centre</Cap>}
+      </span>
       {summary}
       {steps.length ? (
         <ol className="gc-steps">
