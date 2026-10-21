@@ -2,7 +2,9 @@
 // POST /api/widget/conversations/:id/messages — send { body, attachments? }; writes then broadcasts (comms.post_message).
 // An id that is not the caller's answers 404, never 403.
 
+import { after } from "next/server";
 import { errorResponse, jsonResponse, readJsonBody } from "@/lib/widget/respond";
+import { runConversationAutomation } from "@/lib/automation/events";
 import { requirePrincipal } from "@/lib/widget/auth";
 import { isWidgetApiConfigured } from "@/lib/widget/service";
 import { clientIp, ownerKey, rateLimitAll } from "@/lib/widget/ratelimit";
@@ -77,5 +79,7 @@ export async function POST(request, { params }) {
   });
   if (sent.code === "not_found") return errorResponse(404, "not_found");
   if (!sent.message) return errorResponse(500, "write_failed");
+  // The reply's workflows (and the reopen it caused) run once the response is out.
+  after(() => runConversationAutomation(conversation.id));
   return jsonResponse({ message: messageVm(sent.message) }, 201);
 }

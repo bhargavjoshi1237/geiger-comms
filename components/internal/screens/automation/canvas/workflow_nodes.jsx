@@ -6,6 +6,7 @@ import { memo } from "react";
 import { Handle, Position } from "@xyflow/react";
 import { Zap } from "lucide-react";
 
+import { unavailableReason } from "@/lib/workflows/availability";
 import { catalogEntry, summarizeConfig } from "../workflow_catalog";
 
 const ACCENTS = {
@@ -18,6 +19,7 @@ function NodeCard({ accent, kindLabel, data, selected, showTarget = true }) {
   const entry = catalogEntry(data?.type);
   const Icon = entry?.icon || Zap;
   const summary = summarizeConfig(entry, data?.config);
+  const reason = data?.kind === "action" ? unavailableReason(data?.type) : null;
 
   return (
     <div
@@ -50,9 +52,15 @@ function NodeCard({ accent, kindLabel, data, selected, showTarget = true }) {
             {entry?.label || data?.type || "Step"}
           </p>
           {/* Two lines reserved either way, so every node card is the same height. */}
-          <p className="mt-0.5 line-clamp-2 min-h-8 text-xs text-text-secondary">
-            {summary}
-          </p>
+          {reason ? (
+            <p className="mt-0.5 line-clamp-2 min-h-8 text-xs text-amber-600 dark:text-amber-400" title={reason}>
+              Skipped when the workflow runs. {reason}
+            </p>
+          ) : (
+            <p className="mt-0.5 line-clamp-2 min-h-8 text-xs text-text-secondary">
+              {summary}
+            </p>
+          )}
         </div>
       </div>
 

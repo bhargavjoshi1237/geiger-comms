@@ -9,12 +9,17 @@ import { Badge, Button } from "@geiger/ui";
 
 import { MainScreenWrapper } from "@/components/internal/shared/screen_wrappers";
 import { EmptyState, ScreenHeader, SearchInput, Toolbar } from "@/components/internal/shared/screen_kit";
+import { Gated } from "@/components/internal/shared/gated";
+import { Notice } from "@/components/internal/shared/notice";
 import FilterDropdown from "../overview/filter_dropdown";
 import { useOptionalProject } from "@/context/project-context";
+import { useCan } from "@/context/rbac-context";
 import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
 import { createWorkflow } from "@/lib/supabase/workflows";
 import { getUser } from "@/lib/supabase/user";
+import { unavailableReason } from "@/lib/workflows/availability";
 
+import { MANAGE_PERMISSION, NEEDS_MANAGE_WORKFLOWS } from "./constants";
 import {
   WORKFLOW_TEMPLATES,
   WORKFLOW_TEMPLATE_CATEGORY_MAP,
@@ -37,6 +42,8 @@ function instantiateSteps(templateSteps) {
 export function WorkflowTemplatesScreen() {
   const { projectId } = useOptionalProject() ?? {};
   const { openWorkflowInTab } = useWorkspaceUrl();
+  // Using a template creates a workflow, which needs comms.settings.manage.
+  const canManage = useCan(MANAGE_PERMISSION);
 
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
@@ -83,6 +90,10 @@ export function WorkflowTemplatesScreen() {
         description="Start from a proven automation. Each template becomes a draft workflow you can adjust in the builder before setting it live."
       />
 
+      {canManage ? null : (
+        <Notice>You can browse these templates. Using one needs the Manage settings permission.</Notice>
+      )}
+
       <Toolbar>
         <FilterDropdown
           value={category}
@@ -125,6 +136,7 @@ export function WorkflowTemplatesScreen() {
             const Icon = trigger?.icon || Zap;
             const cat = WORKFLOW_TEMPLATE_CATEGORY_MAP[t.category];
             const busy = usingId === t.id;
+            const skipped = t.steps.map((s) => s.kind === "action" && unavailableReason(s.type)).find(Boolean);
             return (
               <div
                 key={t.id}
@@ -138,27 +150,34 @@ export function WorkflowTemplatesScreen() {
                 </div>
                 <h3 className="mt-4 text-base font-semibold text-foreground">{t.name}</h3>
                 <p className="mt-1 flex-1 text-sm text-text-secondary">{t.description}</p>
+                {skipped ? (
+                  <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+                    One step is skipped when it runs. {skipped}
+                  </p>
+                ) : null}
                 <div className="mt-4 flex items-center justify-between gap-2 border-t border-border pt-3">
                   <span className="truncate text-xs text-text-tertiary">
                     When {trigger?.label || "—"} · {stepCountLabel(t.steps)}
                   </span>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={Boolean(usingId)}
-                    className="shrink-0 text-muted-foreground hover:bg-surface-active hover:text-foreground"
-                    onClick={() => void handleUse(t)}
-                  >
-                    {busy ? (
-                      <>
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Creating…
-                      </>
-                    ) : (
-                      <>
-                        Use template <ArrowUpRight className="h-3.5 w-3.5" />
-                      </>
-                    )}
-                  </Button>
+                  <Gated reason={canManage ? null : NEEDS_MANAGE_WORKFLOWS}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={!canManage || Boolean(usingId)}
+                      className="shrink-0 text-muted-foreground hover:bg-surface-active hover:text-foreground"
+                      onClick={() => void handleUse(t)}
+                    >
+                      {busy ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Creating…
+                        </>
+                      ) : (
+                        <>
+                          Use template <ArrowUpRight className="h-3.5 w-3.5" />
+                        </>
+                      )}
+                    </Button>
+                  </Gated>
                 </div>
               </div>
             );

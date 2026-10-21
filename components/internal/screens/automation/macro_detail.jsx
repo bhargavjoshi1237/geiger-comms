@@ -1,6 +1,7 @@
 "use client";
 
 // Macro editor: suite editor frame over the reply, its actions and who can use it. Edits are local until Save, which lifts optimistically to the Macros list and rolls back on failure.
+// `readOnly` (a shared macro without comms.settings.manage) shows it without letting anything change.
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -37,6 +38,8 @@ import {
   Field,
   SectionCard,
 } from "@/components/internal/shared/screen_kit";
+import { Gated } from "@/components/internal/shared/gated";
+import { Notice } from "@/components/internal/shared/notice";
 import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
 import { updateMacro } from "@/lib/supabase/macros";
 import { listTeammates } from "@/lib/supabase/teammates";
@@ -47,6 +50,7 @@ import {
   MACRO_ACTION_CATALOG,
   MACRO_SCOPE_MAP,
   MACRO_SNOOZE_OPTIONS,
+  NEEDS_MANAGE_MACROS,
   PRIORITY_OPTIONS,
   formatDate,
   renderMacroPreview,
@@ -128,7 +132,7 @@ const snapshot = (m) => ({
   actions: Array.isArray(m?.actions) ? m.actions : [],
 });
 
-function ActionControl({ action, entry, teammates, tags, onChange }) {
+function ActionControl({ action, entry, teammates, tags, onChange, disabled }) {
   const field = entry?.field ? FIELD_CONFIG[entry.field] : null;
   if (!field) return null;
   const value = action[field.key] || "";
@@ -150,6 +154,7 @@ function ActionControl({ action, entry, teammates, tags, onChange }) {
   return (
     <Select
       value={value}
+      disabled={disabled}
       onValueChange={(next) => {
         const patch = { [field.key]: next };
         if (entry.field === "teammate") {
@@ -178,7 +183,7 @@ function ActionControl({ action, entry, teammates, tags, onChange }) {
   );
 }
 
-function AddActionMenu({ actions, onAdd }) {
+function AddActionMenu({ actions, onAdd, disabled }) {
   const used = new Set(actions.map((a) => a.action));
   return (
     <DropdownMenu>
@@ -186,6 +191,7 @@ function AddActionMenu({ actions, onAdd }) {
         <Button
           variant="outline"
           size="sm"
+          disabled={disabled}
           className="border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
         >
           <Plus className="h-3.5 w-3.5" /> Add action
@@ -212,6 +218,8 @@ export function MacroDetailScreen({
   macro,
   projectId,
   userId,
+  canManage = true,
+  readOnly = false,
   onBack,
   onUpdate,
   onDuplicate,
@@ -259,6 +267,7 @@ export function MacroDetailScreen({
   const ownedByOther = Boolean(macro.createdBy) && macro.createdBy !== userId;
   // Without a signed-in owner a private macro would be invisible to everyone.
   const privateLocked = ownedByOther || !userId;
+  const reason = readOnly ? NEEDS_MANAGE_MACROS : null;
 
   async function handleSave() {
     if (!form.name.trim()) {
@@ -314,22 +323,32 @@ export function MacroDetailScreen({
       }
       actions={
         <>
-          <Button
-            variant="outline"
-            className="border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
-            onClick={() => onDuplicate?.(macro)}
-          >
-            <Copy className="h-4 w-4" /> Duplicate
-          </Button>
-          <Button
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
-            disabled={!dirty || saving}
-            onClick={() => void handleSave()}
-          >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {saving ? "Saving…" : "Save"}
-          </Button>
+          <Gated reason={reason}>
+            <Button
+              variant="outline"
+              className="border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
+              disabled={readOnly}
+              onClick={() => onDuplicate?.(macro)}
+            >
+              <Copy className="h-4 w-4" /> Duplicate
+            </Button>
+          </Gated>
+          <Gated reason={reason}>
+            <Button
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+              disabled={readOnly || !dirty || saving}
+              onClick={() => void handleSave()}
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {saving ? "Saving…" : "Save"}
+            </Button>
+          </Gated>
         </>
+      }
+      beforeBody={
+        readOnly ? (
+          <Notice>You can see this macro. Changing a macro shared with everyone needs the Manage settings permission.</Notice>
+        ) : null
       }
       nav={NAV}
       subject={macro}
@@ -344,6 +363,7 @@ export function MacroDetailScreen({
                 <Input
                   id="macro-name"
                   value={form.name}
+                  disabled={readOnly}
                   onChange={(e) => set({ name: e.target.value })}
                   placeholder="Refund approved"
                   className="h-9 sm:max-w-sm"
@@ -355,6 +375,7 @@ export function MacroDetailScreen({
                   value={form.body}
                   onChange={(body) => set({ body })}
                   rows={7}
+                  disabled={readOnly}
                 />
               </Field>
             </div>
@@ -376,10 +397,13 @@ export function MacroDetailScreen({
           title={`Actions (${form.actions.length})`}
           description="Run in this order after the reply is inserted."
           action={
-            <AddActionMenu
-              actions={form.actions}
-              onAdd={(key) => set({ actions: [...form.actions, newAction(key)] })}
-            />
+            <Gated reason={reason}>
+              <AddActionMenu
+                actions={form.actions}
+                disabled={readOnly}
+                onAdd={(key) => set({ actions: [...form.actions, newAction(key)] })}
+              />
+            </Gated>
           }
         >
           {form.actions.length === 0 ? (
@@ -415,11 +439,13 @@ export function MacroDetailScreen({
                         entry={entry}
                         teammates={teammates}
                         tags={tags}
+                        disabled={readOnly}
                         onChange={(patch) => setAction(i, patch)}
                       />
                       <Button
                         variant="ghost"
                         size="icon-sm"
+                        disabled={readOnly}
                         aria-label={`Remove ${entry?.label || "action"}`}
                         className="text-muted-foreground hover:bg-red-500/10 hover:text-red-400"
                         onClick={() =>
@@ -441,11 +467,13 @@ export function MacroDetailScreen({
         <SectionCard
           title="Who can use it"
           description={
-            ownedByOther
-              ? "A teammate created this macro, so only they can make it private."
-              : !userId
-                ? "Sign in to keep a macro private to you."
-                : "Private macros stay out of everyone else's list."
+            !canManage
+              ? NEEDS_MANAGE_MACROS
+              : ownedByOther
+                ? "A teammate created this macro, so only they can make it private."
+                : !userId
+                  ? "Sign in to keep a macro private to you."
+                  : "Private macros stay out of everyone else's list."
           }
         >
           <RadioGroup
@@ -454,7 +482,9 @@ export function MacroDetailScreen({
             className="grid gap-3 sm:grid-cols-2"
           >
             {MACRO_SCOPE_OPTIONS.map((o) => {
-              const disabled = o.value === "personal" && privateLocked;
+              // Sharing needs comms.settings.manage; going private needs the owner (and is moot when read-only).
+              const disabled =
+                readOnly || (o.value === "team" ? !canManage : privateLocked);
               return (
                 <Label
                   key={o.value}
@@ -489,13 +519,16 @@ export function MacroDetailScreen({
           title="Danger zone"
           description="Deleting removes this macro for everyone. Replies already sent with it stay in their conversations."
         >
-          <Button
-            type="button"
-            className="bg-red-500/90 text-white hover:bg-red-500"
-            onClick={() => onDelete?.(macro)}
-          >
-            <Trash2 className="h-4 w-4" /> Delete macro
-          </Button>
+          <Gated reason={reason}>
+            <Button
+              type="button"
+              className="bg-red-500/90 text-white hover:bg-red-500"
+              disabled={readOnly}
+              onClick={() => onDelete?.(macro)}
+            >
+              <Trash2 className="h-4 w-4" /> Delete macro
+            </Button>
+          </Gated>
         </SectionCard>
       ) : null}
     </EditorShell>

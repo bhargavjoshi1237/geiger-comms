@@ -30,8 +30,10 @@ import {
   StatusPill,
   Toolbar,
 } from "@/components/internal/shared/screen_kit";
+import { Notice } from "@/components/internal/shared/notice";
 import FilterDropdown from "../overview/filter_dropdown";
 import { useOptionalProject } from "@/context/project-context";
+import { useCan } from "@/context/rbac-context";
 import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
 import {
   createMacro,
@@ -43,6 +45,7 @@ import { getUser } from "@/lib/supabase/user";
 import {
   MACRO_SCOPE_FILTER_OPTIONS,
   MACRO_SCOPE_MAP,
+  MANAGE_PERMISSION,
   formatDate,
   summarizeMacroActions,
 } from "./constants";
@@ -57,9 +60,15 @@ const isVisibleTo = (macro, userId) =>
 const canMakePrivate = (macro, userId) =>
   Boolean(userId) && (!macro.createdBy || macro.createdBy === userId);
 
+// Mirrors the macros RLS: comms.settings.manage writes any macro, everyone else only their own personal ones.
+const canWriteMacro = (macro, userId, canManage) =>
+  canManage || (macro.scope === "personal" && Boolean(userId) && macro.createdBy === userId);
+
 export function MacrosScreen() {
   const { projectId } = useOptionalProject() ?? {};
   const { macroId, openMacro, closeMacro } = useWorkspaceUrl();
+  // Advisory: sharing, or changing a shared macro, needs comms.settings.manage; personal macros stay their owner's.
+  const canManage = useCan(MANAGE_PERMISSION);
 
   const [macros, setMacros] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -279,33 +288,40 @@ export function MacrosScreen() {
       header: "",
       align: "right",
       className: "text-right",
-      render: (row) => (
-        <ActionMenu
-          label={`Actions for ${row.name}`}
-          items={[
-            { icon: Pencil, label: "Edit", onSelect: () => openMacro(row.id) },
-            { icon: Copy, label: "Duplicate", onSelect: () => void handleDuplicate(row) },
-            row.scope === "personal"
-              ? {
-                  icon: Users,
-                  label: "Share with everyone",
-                  onSelect: () => void handleScope(row, "team"),
-                }
-              : canMakePrivate(row, userId) && {
-                  icon: Lock,
-                  label: "Make private",
-                  onSelect: () => void handleScope(row, "personal"),
-                },
-            { separator: true },
-            {
-              icon: Trash2,
-              label: "Delete",
-              variant: "destructive",
-              onSelect: () => setDeleteTarget(row),
-            },
-          ]}
-        />
-      ),
+      render: (row) => {
+        const writable = canWriteMacro(row, userId, canManage);
+        return (
+          <ActionMenu
+            label={`Actions for ${row.name}`}
+            items={[
+              { icon: Pencil, label: writable ? "Edit" : "View", onSelect: () => openMacro(row.id) },
+              // A copy keeps the scope, so copying a shared macro is creating one.
+              { icon: Copy, label: "Duplicate", disabled: !writable, onSelect: () => void handleDuplicate(row) },
+              row.scope === "personal"
+                ? {
+                    icon: Users,
+                    label: "Share with everyone",
+                    disabled: !canManage,
+                    onSelect: () => void handleScope(row, "team"),
+                  }
+                : canMakePrivate(row, userId) && {
+                    icon: Lock,
+                    label: "Make private",
+                    disabled: !canManage,
+                    onSelect: () => void handleScope(row, "personal"),
+                  },
+              { separator: true },
+              {
+                icon: Trash2,
+                label: "Delete",
+                variant: "destructive",
+                disabled: !writable,
+                onSelect: () => setDeleteTarget(row),
+              },
+            ]}
+          />
+        );
+      },
     },
   ];
 
@@ -343,6 +359,8 @@ export function MacrosScreen() {
           macro={selected}
           projectId={projectId}
           userId={userId}
+          canManage={canManage}
+          readOnly={!canWriteMacro(selected, userId, canManage)}
           onBack={closeMacro}
           onUpdate={handleUpdate}
           onDuplicate={(m) => void handleDuplicate(m)}
@@ -369,6 +387,13 @@ export function MacrosScreen() {
         description="Saved replies your team reuses for common questions — each can also assign, tag, snooze or close the conversation."
         actions={createButton}
       />
+
+      {!canManage && !loading ? (
+        <Notice>
+          You can create and change your own macros. Sharing one with everyone, or changing a shared one, needs the
+          Manage settings permission.
+        </Notice>
+      ) : null}
 
       <StatsBar stats={stats} />
 
@@ -437,6 +462,7 @@ export function MacrosScreen() {
 
       <MacroDialog
         open={createOpen}
+        canShare={canManage}
         onCancel={() => setCreateOpen(false)}
         onCreate={handleCreate}
       />

@@ -1,6 +1,6 @@
 "use client";
 
-// Create + edit dialog for one routing rule: name, conditions, strategy, who it assigns to, enabled.
+// Create + edit dialog for one routing rule: name, conditions, strategy, who it assigns to, enabled; `readOnly` only shows it.
 
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
@@ -21,11 +21,13 @@ import {
   Switch,
 } from "@geiger/ui";
 import { Field } from "@/components/internal/shared/screen_kit";
+import { Gated } from "@/components/internal/shared/gated";
 import { cn } from "@/lib/utils";
 import { ChipMultiSelect } from "./rule_fields";
 import {
   AVAILABILITY_MAP,
   CHANNEL_OPTIONS,
+  NEEDS_MANAGE_ROUTING,
   PRIORITY_OPTIONS,
   ROUTING_STRATEGY_MAP,
 } from "./constants";
@@ -53,6 +55,7 @@ export function RoutingRuleDialog({
   teams,
   teammates,
   tagNames,
+  readOnly = false,
   onCancel,
   onSave,
 }) {
@@ -72,7 +75,7 @@ export function RoutingRuleDialog({
     (t) => ({ value: t, label: `#${t}` }),
   );
   const canSave =
-    draft.name.trim() && (!isDirect || draft.fallbackAssigneeId) && !busy;
+    !readOnly && draft.name.trim() && (!isDirect || draft.fallbackAssigneeId) && !busy;
 
   async function submit() {
     if (!canSave) return;
@@ -93,7 +96,7 @@ export function RoutingRuleDialog({
     <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{rule ? "Edit routing rule" : "New routing rule"}</DialogTitle>
+          <DialogTitle>{readOnly ? "Routing rule" : rule ? "Edit routing rule" : "New routing rule"}</DialogTitle>
           <DialogDescription>
             Which conversations this rule catches, and who they go to.
           </DialogDescription>
@@ -110,6 +113,7 @@ export function RoutingRuleDialog({
             <Input
               id="routing-rule-name"
               value={draft.name}
+              disabled={readOnly}
               onChange={(e) => set("name")(e.target.value)}
               placeholder="e.g. Email round-robin"
             />
@@ -122,6 +126,7 @@ export function RoutingRuleDialog({
               onChange={set("channel")}
               anyLabel="Any channel"
               ariaLabel="Channels"
+              disabled={readOnly}
             />
           </Field>
 
@@ -132,6 +137,7 @@ export function RoutingRuleDialog({
               onChange={set("priority")}
               anyLabel="Any priority"
               ariaLabel="Priorities"
+              disabled={readOnly}
             />
           </Field>
 
@@ -143,6 +149,7 @@ export function RoutingRuleDialog({
                 onChange={set("tags")}
                 anyLabel="Any tags"
                 ariaLabel="Tags"
+                disabled={readOnly}
               />
             ) : (
               <p className="text-xs text-text-tertiary">
@@ -161,12 +168,13 @@ export function RoutingRuleDialog({
                     type="button"
                     role="radio"
                     aria-checked={active}
+                    disabled={readOnly}
                     onClick={() => set("strategy")(value)}
                     className={cn(
-                      "flex flex-col gap-1 rounded-lg border p-3 text-left transition-colors",
+                      "flex flex-col gap-1 rounded-lg border p-3 text-left transition-colors disabled:cursor-not-allowed",
                       active
                         ? "border-border-strong bg-surface-active"
-                        : "border-border bg-surface-card hover:bg-surface-hover",
+                        : "border-border bg-surface-card hover:bg-surface-hover disabled:opacity-50 disabled:hover:bg-surface-card",
                     )}
                   >
                     <span className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -185,6 +193,7 @@ export function RoutingRuleDialog({
               <Select
                 value={draft.fallbackAssigneeId ?? ""}
                 onValueChange={set("fallbackAssigneeId")}
+                disabled={readOnly}
               >
                 <SelectTrigger id="routing-rule-teammate">
                   <SelectValue placeholder="Choose a teammate" />
@@ -196,7 +205,7 @@ export function RoutingRuleDialog({
                         <span
                           className={cn(
                             "h-1.5 w-1.5 rounded-full",
-                            AVAILABILITY_MAP[t.availability]?.dotClass ?? "bg-[#737373]",
+                            AVAILABILITY_MAP[t.availability]?.dotClass ?? "bg-text-secondary",
                           )}
                         />
                         {t.name || t.email || "Teammate"}
@@ -215,6 +224,7 @@ export function RoutingRuleDialog({
               <Select
                 value={draft.teamId ?? ALL_TEAMMATES}
                 onValueChange={(v) => set("teamId")(v === ALL_TEAMMATES ? null : v)}
+                disabled={readOnly}
               >
                 <SelectTrigger id="routing-rule-team">
                   <SelectValue />
@@ -240,6 +250,7 @@ export function RoutingRuleDialog({
             </div>
             <Switch
               checked={draft.enabled}
+              disabled={readOnly}
               onCheckedChange={set("enabled")}
               aria-label="Enabled"
             />
@@ -250,15 +261,17 @@ export function RoutingRuleDialog({
           <Button type="button" variant="ghost" onClick={onCancel}>
             Cancel
           </Button>
-          <Button
-            type="button"
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
-            disabled={!canSave}
-            onClick={() => void submit()}
-          >
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {rule ? "Save rule" : "Create rule"}
-          </Button>
+          <Gated reason={readOnly ? NEEDS_MANAGE_ROUTING : null}>
+            <Button
+              type="button"
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+              disabled={!canSave}
+              onClick={() => void submit()}
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {rule ? "Save rule" : "Create rule"}
+            </Button>
+          </Gated>
         </DialogFooter>
       </DialogContent>
     </Dialog>

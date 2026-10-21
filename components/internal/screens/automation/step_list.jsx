@@ -24,6 +24,7 @@ import {
 } from "@geiger/ui";
 
 import { cn } from "@/lib/utils";
+import { unavailableReason } from "@/lib/workflows/availability";
 import {
   TRIGGER_CATALOG,
   CONDITION_CATALOG,
@@ -41,10 +42,10 @@ const SELECT_AS_INPUT =
   "!h-auto !rounded-[var(--input-box-radius)] !px-[var(--input-box-padding-x)] !py-[var(--input-box-padding-y)] leading-5";
 
 // One config control, rendered from a catalog field descriptor.
-function FieldControl({ field, value, onChange }) {
+function FieldControl({ field, value, onChange, disabled }) {
   if (field.type === "select") {
     return (
-      <Select value={value || field.default} onValueChange={onChange}>
+      <Select value={value || field.default} onValueChange={onChange} disabled={disabled}>
         <SelectTrigger className={SELECT_AS_INPUT}>
           <SelectValue />
         </SelectTrigger>
@@ -65,6 +66,7 @@ function FieldControl({ field, value, onChange }) {
         value={value || ""}
         onChange={(e) => onChange(e.target.value)}
         placeholder={field.label}
+        disabled={disabled}
         className="h-[84px] min-h-0 resize-none"
       />
     );
@@ -75,12 +77,13 @@ function FieldControl({ field, value, onChange }) {
       value={value || ""}
       onChange={(e) => onChange(e.target.value)}
       placeholder={field.label}
+      disabled={disabled}
     />
   );
 }
 
 // Inline config grid; a textarea or a lone field takes the full row so no card is left half-empty.
-function FieldGrid({ entry, config, onChange, className }) {
+function FieldGrid({ entry, config, onChange, className, disabled }) {
   if (!entry?.fields?.length) return null;
   return (
     <div className={cn("mt-3 grid gap-3 sm:grid-cols-2", className)}>
@@ -97,6 +100,7 @@ function FieldGrid({ entry, config, onChange, className }) {
             field={field}
             value={config?.[field.key]}
             onChange={(v) => onChange(field.key, v)}
+            disabled={disabled}
           />
         </div>
       ))}
@@ -113,9 +117,9 @@ function Connector() {
 }
 
 // Trigger picker grouped like the catalog (Conversations / Time-based / Tickets).
-export function TriggerSelect({ value, onChange, className }) {
+export function TriggerSelect({ value, onChange, className, disabled }) {
   return (
-    <Select value={value || ""} onValueChange={onChange}>
+    <Select value={value || ""} onValueChange={onChange} disabled={disabled}>
       <SelectTrigger className={className}>
         <SelectValue placeholder="Choose a trigger" />
       </SelectTrigger>
@@ -135,13 +139,14 @@ export function TriggerSelect({ value, onChange, className }) {
   );
 }
 
-function AddStepMenu({ onAdd }) {
+function AddStepMenu({ onAdd, disabled }) {
   const actionGroups = groupByGroup(ACTION_CATALOG);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
           variant="outline"
+          disabled={disabled}
           className="w-full border-dashed border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
         >
           <Plus className="h-4 w-4" /> Add step
@@ -170,13 +175,19 @@ function AddStepMenu({ onAdd }) {
             <DropdownMenuLabel className="text-text-tertiary">{group.group}</DropdownMenuLabel>
             {group.items.map((a) => {
               const Icon = a.icon;
+              const reason = unavailableReason(a.key);
               return (
                 <DropdownMenuItem
                   key={a.key}
-                  className="cursor-pointer gap-2 text-muted-foreground focus:bg-surface-hover focus:text-foreground"
+                  disabled={Boolean(reason)}
+                  className="cursor-pointer items-start gap-2 text-muted-foreground focus:bg-surface-hover focus:text-foreground"
                   onClick={() => onAdd("action", a.key)}
                 >
-                  <Icon className="h-4 w-4" /> {a.label}
+                  <Icon className="mt-0.5 h-4 w-4" />
+                  <span className="min-w-0">
+                    {a.label}
+                    {reason ? <span className="block text-xs text-text-tertiary">{reason}</span> : null}
+                  </span>
                 </DropdownMenuItem>
               );
             })}
@@ -187,7 +198,8 @@ function AddStepMenu({ onAdd }) {
   );
 }
 
-export function WorkflowStepList({ steps, onChange }) {
+// `readOnly` keeps every step visible but disables each control (no comms.settings.manage).
+export function WorkflowStepList({ steps, onChange, readOnly = false }) {
   const list = Array.isArray(steps) ? steps : [];
   const triggerStep = list[0];
   const rest = list.slice(1);
@@ -243,6 +255,7 @@ export function WorkflowStepList({ steps, onChange }) {
             <TriggerSelect
               value={triggerStep?.type}
               onChange={setTriggerType}
+              disabled={readOnly}
               className="mt-1 h-9 border-0 bg-transparent px-0 text-sm font-medium text-foreground shadow-none focus:ring-0"
             />
           </div>
@@ -252,6 +265,7 @@ export function WorkflowStepList({ steps, onChange }) {
           config={triggerStep?.config}
           onChange={(key, v) => setStepConfig(0, key, v)}
           className="pl-12"
+          disabled={readOnly}
         />
       </div>
 
@@ -260,6 +274,7 @@ export function WorkflowStepList({ steps, onChange }) {
         const entry = catalogEntry(step.type);
         const Icon = entry?.icon || Zap;
         const isCondition = step.kind === "condition";
+        const reason = isCondition ? null : unavailableReason(step.type);
         return (
           <Fragment key={step.id}>
             <Connector />
@@ -279,7 +294,11 @@ export function WorkflowStepList({ steps, onChange }) {
                     {isCondition ? "Only continue if" : "Then do this"}
                   </p>
                   <p className="text-sm font-medium text-foreground">{entry?.label || step.type}</p>
-                  {!entry?.fields?.length && entry?.description ? (
+                  {reason ? (
+                    <p className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
+                      Skipped when the workflow runs. {reason}
+                    </p>
+                  ) : !entry?.fields?.length && entry?.description ? (
                     <p className="mt-0.5 text-xs text-text-secondary">{entry.description}</p>
                   ) : null}
                 </div>
@@ -289,7 +308,7 @@ export function WorkflowStepList({ steps, onChange }) {
                     size="icon-sm"
                     className="text-text-tertiary hover:bg-surface-active hover:text-foreground"
                     aria-label="Move up"
-                    disabled={index === 1}
+                    disabled={readOnly || index === 1}
                     onClick={() => moveStep(index, -1)}
                   >
                     <MoveUp className="h-3.5 w-3.5" />
@@ -299,7 +318,7 @@ export function WorkflowStepList({ steps, onChange }) {
                     size="icon-sm"
                     className="text-text-tertiary hover:bg-surface-active hover:text-foreground"
                     aria-label="Move down"
-                    disabled={index === list.length - 1}
+                    disabled={readOnly || index === list.length - 1}
                     onClick={() => moveStep(index, 1)}
                   >
                     <MoveDown className="h-3.5 w-3.5" />
@@ -309,6 +328,7 @@ export function WorkflowStepList({ steps, onChange }) {
                     size="icon-sm"
                     className="text-red-700 hover:bg-red-500/10 hover:text-red-700 dark:text-red-300 dark:hover:text-red-300"
                     aria-label="Remove step"
+                    disabled={readOnly}
                     onClick={() => removeStep(index)}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -320,6 +340,7 @@ export function WorkflowStepList({ steps, onChange }) {
                 config={step.config}
                 onChange={(key, v) => setStepConfig(index, key, v)}
                 className="pl-12"
+                disabled={readOnly}
               />
             </div>
           </Fragment>
@@ -327,7 +348,7 @@ export function WorkflowStepList({ steps, onChange }) {
       })}
 
       <Connector />
-      <AddStepMenu onAdd={addStep} />
+      <AddStepMenu onAdd={addStep} disabled={readOnly} />
     </div>
   );
 }

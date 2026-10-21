@@ -1,6 +1,6 @@
 "use client";
 
-// Create + edit dialog for an SLA policy: name, the channels/priorities it applies to, its three targets, business hours and the enabled switch.
+// Create + edit dialog for an SLA policy: name, the channels/priorities it applies to, its three targets, business hours and the enabled switch; `readOnly` only shows it.
 
 import { useState } from "react";
 import { toast } from "sonner";
@@ -22,7 +22,8 @@ import {
   Switch,
 } from "@geiger/ui";
 import { Field } from "@/components/internal/shared/screen_kit";
-import { CHANNEL_OPTIONS, PRIORITY_OPTIONS } from "./constants";
+import { Gated } from "@/components/internal/shared/gated";
+import { CHANNEL_OPTIONS, NEEDS_MANAGE_SLA, PRIORITY_OPTIONS } from "./constants";
 import { ChipMultiSelect, DurationField } from "./rule_fields";
 
 // Radix Select can't hold an empty value, so "no business hours" travels as a sentinel.
@@ -41,7 +42,7 @@ function draftFrom(policy) {
   };
 }
 
-export function SlaPolicyDialog({ open, policy, businessHours, onCancel, onSave }) {
+export function SlaPolicyDialog({ open, policy, businessHours, readOnly = false, onCancel, onSave }) {
   const [draft, setDraft] = useState(() => draftFrom(policy));
   const [busy, setBusy] = useState(false);
   const set = (key) => (value) => setDraft((d) => ({ ...d, [key]: value }));
@@ -52,7 +53,7 @@ export function SlaPolicyDialog({ open, policy, businessHours, onCancel, onSave 
     draft.businessHoursId && !hours.some((h) => h.id === draft.businessHoursId);
 
   async function submit() {
-    if (!draft.name.trim()) return;
+    if (readOnly || !draft.name.trim()) return;
     if (!draft.firstResponseMins && !draft.resolutionMins) {
       toast.error("Set a first response or a resolution target.");
       return;
@@ -75,10 +76,11 @@ export function SlaPolicyDialog({ open, policy, businessHours, onCancel, onSave 
     <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>{editing ? "Edit SLA policy" : "New SLA policy"}</DialogTitle>
+          <DialogTitle>{readOnly ? "SLA policy" : editing ? "Edit SLA policy" : "New SLA policy"}</DialogTitle>
           <DialogDescription>
-            The clock starts when a conversation arrives or changes assignee, using the first enabled
-            policy that matches it.
+            The clock starts when a conversation arrives, on the first enabled policy that matches it
+            (a workflow&apos;s Apply SLA step can switch policies). Reassigning or reopening restarts the
+            clock; snoozing pauses it.
           </DialogDescription>
         </DialogHeader>
 
@@ -93,6 +95,7 @@ export function SlaPolicyDialog({ open, policy, businessHours, onCancel, onSave 
             <Input
               id="sla-name"
               value={draft.name}
+              disabled={readOnly}
               onChange={(e) => set("name")(e.target.value)}
               placeholder="e.g. VIP urgent"
               autoFocus
@@ -106,6 +109,7 @@ export function SlaPolicyDialog({ open, policy, businessHours, onCancel, onSave 
               onChange={set("channels")}
               anyLabel="Any channel"
               ariaLabel="Channels this policy applies to"
+              disabled={readOnly}
             />
           </Field>
 
@@ -116,6 +120,7 @@ export function SlaPolicyDialog({ open, policy, businessHours, onCancel, onSave 
               onChange={set("priorities")}
               anyLabel="Any priority"
               ariaLabel="Priorities this policy applies to"
+              disabled={readOnly}
             />
           </Field>
 
@@ -125,6 +130,7 @@ export function SlaPolicyDialog({ open, policy, businessHours, onCancel, onSave 
                 id="sla-first"
                 value={draft.firstResponseMins}
                 onChange={set("firstResponseMins")}
+                disabled={readOnly}
               />
             </Field>
             <Field label="Resolution" htmlFor="sla-resolution" hint="Time until the conversation is closed.">
@@ -132,6 +138,7 @@ export function SlaPolicyDialog({ open, policy, businessHours, onCancel, onSave 
                 id="sla-resolution"
                 value={draft.resolutionMins}
                 onChange={set("resolutionMins")}
+                disabled={readOnly}
               />
             </Field>
           </div>
@@ -145,6 +152,7 @@ export function SlaPolicyDialog({ open, policy, businessHours, onCancel, onSave 
               id="sla-next"
               value={draft.nextResponseMins}
               onChange={set("nextResponseMins")}
+              disabled={readOnly}
             />
           </Field>
 
@@ -156,6 +164,7 @@ export function SlaPolicyDialog({ open, policy, businessHours, onCancel, onSave 
             <Select
               value={draft.businessHoursId ?? CALENDAR_TIME}
               onValueChange={(v) => set("businessHoursId")(v === CALENDAR_TIME ? null : v)}
+              disabled={readOnly}
             >
               <SelectTrigger id="sla-hours">
                 <SelectValue />
@@ -183,6 +192,7 @@ export function SlaPolicyDialog({ open, policy, businessHours, onCancel, onSave 
             </div>
             <Switch
               checked={draft.enabled}
+              disabled={readOnly}
               onCheckedChange={set("enabled")}
               aria-label="Policy enabled"
             />
@@ -193,15 +203,17 @@ export function SlaPolicyDialog({ open, policy, businessHours, onCancel, onSave 
           <Button type="button" variant="ghost" onClick={onCancel}>
             Cancel
           </Button>
-          <Button
-            type="button"
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
-            disabled={!draft.name.trim() || busy}
-            onClick={() => void submit()}
-          >
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {editing ? "Save policy" : "Create policy"}
-          </Button>
+          <Gated reason={readOnly ? NEEDS_MANAGE_SLA : null}>
+            <Button
+              type="button"
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+              disabled={readOnly || !draft.name.trim() || busy}
+              onClick={() => void submit()}
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {editing ? "Save policy" : "Create policy"}
+            </Button>
+          </Gated>
         </DialogFooter>
       </DialogContent>
     </Dialog>

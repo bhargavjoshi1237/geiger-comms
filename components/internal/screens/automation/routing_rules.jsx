@@ -1,6 +1,6 @@
 "use client";
 
-// Routing Rules: the ordered list comms.assign_next reads top to bottom — strategy, team or teammate, conditions, enabled. Editing happens in RoutingRuleDialog.
+// Routing Rules: the ordered list comms.assign_next reads top to bottom when lib/automation routes a new conversation — strategy, team or teammate, conditions, enabled. Editing happens in RoutingRuleDialog.
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -35,8 +35,11 @@ import {
   StatusPill,
   Toolbar,
 } from "@/components/internal/shared/screen_kit";
+import { Gated } from "@/components/internal/shared/gated";
+import { Notice } from "@/components/internal/shared/notice";
 import FilterDropdown from "../overview/filter_dropdown";
 import { useOptionalProject } from "@/context/project-context";
+import { useCan } from "@/context/rbac-context";
 import { cn } from "@/lib/utils";
 import {
   createRoutingRule,
@@ -54,6 +57,8 @@ import { RoutingRuleDialog } from "./routing_rule_dialog";
 import {
   AVAILABILITY_MAP,
   ENABLED_FILTER_OPTIONS,
+  MANAGE_PERMISSION,
+  NEEDS_MANAGE_ROUTING,
   ROUTING_STRATEGY_FILTER_OPTIONS,
   ROUTING_STRATEGY_MAP,
   summarizeMatch,
@@ -89,6 +94,9 @@ function AssignsTo({ rule, teammateById, teamName }) {
 
 export function RoutingRulesScreen() {
   const { projectId } = useOptionalProject() ?? {};
+  // Advisory: RLS refuses routing-rule writes without comms.settings.manage; the dialog still opens read-only.
+  const canManage = useCan(MANAGE_PERMISSION);
+  const reason = canManage ? null : NEEDS_MANAGE_ROUTING;
 
   const [rules, setRules] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -302,8 +310,8 @@ export function RoutingRulesScreen() {
               label={row.name}
               onUp={() => void handleMove(row, -1)}
               onDown={() => void handleMove(row, 1)}
-              disableUp={filtersActive || index === 0}
-              disableDown={filtersActive || index === rules.length - 1}
+              disableUp={!canManage || filtersActive || index === 0}
+              disableDown={!canManage || filtersActive || index === rules.length - 1}
             />
           </div>
         );
@@ -336,11 +344,14 @@ export function RoutingRulesScreen() {
       header: "Enabled",
       render: (row) => (
         <div onClick={(e) => e.stopPropagation()}>
-          <Switch
-            checked={row.enabled}
-            onCheckedChange={(v) => void handleToggle(row, v)}
-            aria-label={row.enabled ? `Disable ${row.name}` : `Enable ${row.name}`}
-          />
+          <Gated reason={reason}>
+            <Switch
+              checked={row.enabled}
+              disabled={!canManage}
+              onCheckedChange={(v) => void handleToggle(row, v)}
+              aria-label={row.enabled ? `Disable ${row.name}` : `Enable ${row.name}`}
+            />
+          </Gated>
         </div>
       ),
     },
@@ -353,16 +364,17 @@ export function RoutingRulesScreen() {
         <ActionMenu
           label={`Actions for ${row.name}`}
           items={[
-            { icon: Pencil, label: "Edit", onSelect: () => openEdit(row) },
-            { icon: Copy, label: "Duplicate", onSelect: () => void handleDuplicate(row) },
+            { icon: Pencil, label: canManage ? "Edit" : "View", onSelect: () => openEdit(row) },
+            { icon: Copy, label: "Duplicate", disabled: !canManage, onSelect: () => void handleDuplicate(row) },
             row.enabled
-              ? { icon: PowerOff, label: "Disable", onSelect: () => void handleToggle(row, false) }
-              : { icon: Power, label: "Enable", onSelect: () => void handleToggle(row, true) },
+              ? { icon: PowerOff, label: "Disable", disabled: !canManage, onSelect: () => void handleToggle(row, false) }
+              : { icon: Power, label: "Enable", disabled: !canManage, onSelect: () => void handleToggle(row, true) },
             { separator: true },
             {
               icon: Trash2,
               label: "Delete",
               variant: "destructive",
+              disabled: !canManage,
               onSelect: () => setDeleteTarget(row),
             },
           ]}
@@ -372,12 +384,15 @@ export function RoutingRulesScreen() {
   ];
 
   const createButton = (
-    <Button
-      className="bg-primary text-primary-foreground hover:bg-primary/90"
-      onClick={openCreate}
-    >
-      <Plus className="h-4 w-4" /> New rule
-    </Button>
+    <Gated reason={reason}>
+      <Button
+        className="bg-primary text-primary-foreground hover:bg-primary/90"
+        disabled={!canManage}
+        onClick={openCreate}
+      >
+        <Plus className="h-4 w-4" /> New rule
+      </Button>
+    </Gated>
   );
 
   return (
@@ -388,11 +403,18 @@ export function RoutingRulesScreen() {
         actions={createButton}
       />
 
-      <InlineNotice title="Auto-assignment isn't switched on yet">
-        Rules are saved in order, but new conversations aren&apos;t assigned
-        automatically yet. Once it&apos;s on, the first enabled rule that matches a
-        conversation decides its assignee.
+      <InlineNotice title="How auto-assignment works">
+        When a customer starts a conversation, live workflows run first. If it&apos;s
+        still unassigned, the first enabled rule that matches it and has someone
+        available assigns it. Offline teammates are skipped, and away teammates only get
+        conversations while their office hours are open. Messenger conversations are
+        assigned as the first message arrives; other channels on the automation
+        engine&apos;s next scheduled run.
       </InlineNotice>
+
+      {!canManage && !loading ? (
+        <Notice>You can see these routing rules. Changing them needs the Manage settings permission.</Notice>
+      ) : null}
 
       <StatsBar stats={stats} />
 
@@ -470,6 +492,7 @@ export function RoutingRulesScreen() {
         teams={teams}
         teammates={teammates}
         tagNames={tagNames}
+        readOnly={!canManage}
         onCancel={() => setDialog({ open: false, rule: null })}
         onSave={handleSave}
       />
