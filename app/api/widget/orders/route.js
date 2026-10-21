@@ -1,11 +1,10 @@
-// GET /api/widget/orders — recent orders for the signed-in contact (New Conversation "Which order?" picker).
-// Anonymous visitors have no orders: the list is empty and the widget should hide the picker.
+// GET /api/widget/orders — the New Conversation "Which order?" picker's source.
+// Comms keeps no order data (ecommerce actions are out of scope), so the list is always empty and the widget hides the picker.
 
 import { errorResponse, jsonResponse } from "@/lib/widget/respond";
 import { requirePrincipal } from "@/lib/widget/auth";
 import { isWidgetApiConfigured } from "@/lib/widget/service";
 import { getAppById } from "@/lib/widget/apps";
-import { listContactOrders } from "@/lib/widget/data";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,14 +17,5 @@ export async function GET(request) {
   const app = await getAppById(principal.appId);
   if (!app) return errorResponse(404, "app_not_found");
 
-  const rows = principal.contactId ? await listContactOrders(principal.contactId) : [];
-  return jsonResponse({
-    orders: rows.map((o) => ({
-      id: o.id,
-      reference: o.reference,
-      title: o.title,
-      status: o.status ?? "—",
-      items: Array.isArray(o.items) ? o.items?.[0]?.count ?? 1 : 1,
-    })),
-  });
+  return jsonResponse({ orders: [] });
 }
