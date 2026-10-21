@@ -1,19 +1,19 @@
 "use client";
 
-// People — the contact directory and hub of the Customers area. Follows the
-// suite list pattern: header + create, KPI bar, toolbar filters, a DataTable
-// and pagination. Selecting a row opens the person in the URL (?person=<id>)
-// and swaps to the full contact editor (the unified-timeline detail view).
+// People: the contact directory (suite list pattern); a row opens ?person=<id> in the contact editor.
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   Building2,
+  Download,
   MessagesSquare,
   Pencil,
   Plus,
+  RefreshCw,
   Ticket as TicketIcon,
   Trash2,
+  Upload,
   Users,
 } from "lucide-react";
 import {
@@ -30,6 +30,11 @@ import {
   DialogTitle,
   Input,
   LogoLoading,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@geiger/ui";
 import { MainScreenWrapper } from "@/components/internal/shared/screen_wrappers";
 import {
@@ -47,7 +52,6 @@ import {
   Toolbar,
 } from "@/components/internal/shared/screen_kit";
 import FilterDropdown from "../overview/filter_dropdown";
-import { useOptionalProject } from "@/context/project-context";
 import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
 import { getUser } from "@/lib/supabase/user";
 import {
@@ -59,25 +63,41 @@ import {
   LIFECYCLE_MAP,
   formatRelativeTime,
   initialsOf,
+  restoreRow,
+  tagLabel,
 } from "./constants";
+import { downloadCsv } from "@/components/internal/shared/csv";
+import { exportRows } from "./import_plan";
+import { ImportDialog } from "./import_dialog";
 import { useCustomers } from "./use_customers";
 import { PersonDetailScreen } from "./person_detail";
 
-// Module scope: the "new this week" window is fixed per mount, not per render.
+// Module scope keeps render pure: the "new this week" window is fixed at page load.
 const NEW_WINDOW_MS = 7 * 86400000;
 const newSince = Date.now() - NEW_WINDOW_MS;
 
+const NO_COMPANY = "__none";
+const EMPTY_DRAFT = { name: "", email: "", company: "", companyId: NO_COMPANY };
+
+const OUTLINE_BUTTON =
+  "border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground";
+
 export function PeopleScreen() {
-  const { projectId } = useOptionalProject() ?? {};
-  const { personId, openPerson, closePerson, openConversationInTab, openTicket } =
+  const { personId, openPerson, closePerson, openConversationInTab, openTicketInTab } =
     useWorkspaceUrl();
   const {
+    projectId,
     people,
     setPeople,
-    conversations,
+    companies,
+    companiesAvailable,
+    attributes,
+    setAttributes,
     tickets,
+    tags,
     loading,
-    demo,
+    error,
+    reload,
     conversationsOf,
     ticketsOf,
   } = useCustomers();
@@ -86,10 +106,11 @@ export function PeopleScreen() {
   const [lifecycle, setLifecycle] = useState("all");
   const [companyFilter, setCompanyFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
-  const [draft, setDraft] = useState({ name: "", email: "", company: "" });
+  const [importOpen, setImportOpen] = useState(false);
+  const [draft, setDraft] = useState(EMPTY_DRAFT);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
-  const companies = useMemo(() => {
+  const companyOptions = useMemo(() => {
     const set = new Map();
     for (const p of people) {
       const c = (p.company || "").trim();
@@ -110,20 +131,12 @@ export function PeopleScreen() {
       const open = convos.filter(
         (c) => (c.status || "").toLowerCase() !== "closed",
       ).length;
-      const last = [...convos]
+      const last = convos
         .map((c) => c.lastMessageAt || c.createdAt)
         .filter(Boolean)
         .sort()
         .reverse()[0];
-      map.set(p.id, { total: convos.length, open, last });
-    }
-    return map;
-  }, [people, conversationsOf]);
-
-  const ticketCounts = useMemo(() => {
-    const map = new Map();
-    for (const p of people) {
-      map.set(p.id, ticketsOf(p, conversationsOf(p)).length);
+      map.set(p.id, { convos, total: convos.length, open, last, tickets: ticketsOf(convos) });
     }
     return map;
   }, [people, conversationsOf, ticketsOf]);
@@ -161,71 +174,50 @@ export function PeopleScreen() {
     const vip = people.filter(
       (p) =>
         p.lifecycle === "vip" ||
-        (p.tags || []).some((t) =>
-          (typeof t === "string" ? t : t.name || "").toLowerCase() === "vip",
-        ),
+        (p.tags || []).some((t) => tagLabel(t).toLowerCase() === "vip"),
     ).length;
-    const active = people.filter(
-      (p) => (counts.get(p.id)?.open || 0) > 0,
-    ).length;
+    const active = people.filter((p) => (counts.get(p.id)?.open || 0) > 0).length;
+    const linkedTickets = new Set(
+      [...counts.values()].flatMap((c) => c.tickets.map((t) => t.id)),
+    ).size;
     return [
-      {
-        label: "People",
-        value: String(people.length),
-        footer: demo ? "Demo data — add a project contact" : `${fresh} new this week`,
-      },
-      { label: "VIP", value: String(vip), footer: "Flagged or lifecycle VIP" },
-      {
-        label: "In conversation",
-        value: String(active),
-        footer: "With an open thread",
-      },
+      { label: "People", value: String(people.length), footer: `${fresh} new this week` },
+      { label: "VIP", value: String(vip), footer: "Tagged or lifecycle VIP" },
+      { label: "In conversation", value: String(active), footer: "With an open thread" },
       {
         label: "Tickets",
-        value: String(tickets.length),
-        footer: "Linked across people",
+        value: String(linkedTickets),
+        footer: `Of ${tickets.length} in this workspace`,
       },
     ];
-  }, [people, tickets, counts, demo]);
+  }, [people, tickets, counts]);
 
   async function handleCreate() {
     if (!draft.name.trim() && !draft.email.trim()) {
       toast.error("Give the person a name or an email.");
       return;
     }
-    const optimisticId = crypto.randomUUID();
-    const optimistic = {
-      id: optimisticId,
+    const company =
+      draft.companyId !== NO_COMPANY ? companies.find((c) => c.id === draft.companyId) : null;
+    const now = new Date().toISOString();
+    const input = {
+      id: crypto.randomUUID(),
       name: draft.name.trim() || draft.email.trim().split("@")[0],
       email: draft.email.trim(),
-      company: draft.company.trim(),
-      lifecycle: "lead",
-      tags: [],
-      notes: [],
-      tasks: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      company: company ? company.name : draft.company.trim(),
+      ...(company ? { companyId: company.id } : {}),
+      projectId: projectId ?? null,
     };
     setCreateOpen(false);
-    setDraft({ name: "", email: "", company: "" });
-    if (demo) {
-      setPeople((prev) => [optimistic, ...prev]);
-      toast.success("Person added");
-      openPerson(optimisticId);
-      return;
-    }
-    setPeople((prev) => [optimistic, ...prev]);
+    setDraft(EMPTY_DRAFT);
+    setPeople((prev) => [
+      { ...input, companyId: company?.id ?? null, lifecycle: "lead", tags: [], notes: [], tasks: [], custom: {}, createdAt: now, updatedAt: now },
+      ...prev,
+    ]);
     const user = await getUser();
-    const created = await createContact({
-      id: optimisticId,
-      name: optimistic.name,
-      email: optimistic.email || null,
-      company: optimistic.company || null,
-      projectId: projectId ?? null,
-      createdBy: user?.id ?? null,
-    });
+    const created = await createContact({ ...input, createdBy: user?.id ?? null });
     if (!created) {
-      setPeople((prev) => prev.filter((p) => p.id !== optimisticId));
+      setPeople((prev) => prev.filter((p) => p.id !== input.id));
       toast.error("Couldn't create the person.");
       return;
     }
@@ -234,25 +226,31 @@ export function PeopleScreen() {
     openPerson(created.id);
   }
 
-  const handleUpdate = (updated) =>
-    setPeople((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+  // `next` is the saved person or an updater applied to the current one.
+  const handleUpdate = (id, next) =>
+    setPeople((prev) =>
+      prev.map((p) => (p.id === id ? (typeof next === "function" ? next(p) : next) : p)),
+    );
 
   async function handleDelete(person) {
     setDeleteTarget(null);
-    const previous = people;
+    const index = people.findIndex((p) => p.id === person.id);
     setPeople((prev) => prev.filter((p) => p.id !== person.id));
     if (personId === person.id) closePerson();
-    if (demo || String(person.id).startsWith("demo-")) {
-      toast.success(`Deleted “${person.name}”.`);
-      return;
-    }
     const ok = await softDeleteContact(person.id);
     if (!ok) {
-      setPeople(previous);
+      setPeople((prev) => restoreRow(prev, person, index));
       toast.error("Couldn't delete the person.");
       return;
     }
     toast.success(`Deleted “${person.name}”.`);
+  }
+
+  function handleExport() {
+    downloadCsv(
+      `people-${new Date().toISOString().slice(0, 10)}.csv`,
+      exportRows("people", filtered, attributes),
+    );
   }
 
   const selected = useMemo(
@@ -318,7 +316,7 @@ export function PeopleScreen() {
       header: "Tickets",
       render: (row) => (
         <span className="text-sm tabular-nums text-text-secondary">
-          {ticketCounts.get(row.id) || 0}
+          {counts.get(row.id)?.tickets.length || 0}
         </span>
       ),
     },
@@ -337,22 +335,22 @@ export function PeopleScreen() {
       align: "right",
       className: "w-12 text-right",
       render: (row) => {
-        const convos = conversationsOf(row);
+        const convo = counts.get(row.id)?.convos[0];
+        const ticket = counts.get(row.id)?.tickets[0];
         return (
           <ActionMenu
             label={`Actions for ${row.name}`}
             items={[
               { icon: Pencil, label: "Open", onSelect: () => openPerson(row.id) },
-              convos[0] && {
+              convo && {
                 icon: MessagesSquare,
                 label: "Open conversation",
-                onSelect: () =>
-                  openConversationInTab(convos[0].id, "All Conversations"),
+                onSelect: () => openConversationInTab(convo.id, "All Conversations"),
               },
-              ticketsOf(row, convos)[0] && {
+              ticket && {
                 icon: TicketIcon,
                 label: "Open ticket",
-                onSelect: () => openTicket(ticketsOf(row, convos)[0].id),
+                onSelect: () => openTicketInTab(ticket.id, "Tickets"),
               },
               { separator: true },
               {
@@ -395,15 +393,11 @@ export function PeopleScreen() {
   );
 
   if (selected) {
-    const selectedConvos = conversationsOf(selected);
-    const convoTags = [
+    const selectedConvos = counts.get(selected.id)?.convos || [];
+    const suggestedTags = [
       ...new Map(
-        selectedConvos
-          .flatMap((c) => c.tags || [])
-          .map((t) => [
-            (typeof t === "string" ? t : t.name || "").toLowerCase(),
-            t,
-          ])
+        [...tags, ...selectedConvos.flatMap((c) => c.tags || [])]
+          .map((t) => [tagLabel(t).toLowerCase(), t])
           .filter(([k]) => k),
       ).values(),
     ];
@@ -411,10 +405,13 @@ export function PeopleScreen() {
       <>
         <PersonDetailScreen
           person={selected}
-          demo={demo || String(selected.id).startsWith("demo-")}
+          companies={companies}
+          companiesAvailable={companiesAvailable}
+          attributes={attributes}
+          onAttributeCreated={(attr) => setAttributes((prev) => [...prev, attr])}
           conversations={selectedConvos}
-          tickets={ticketsOf(selected, selectedConvos)}
-          tags={convoTags}
+          tickets={counts.get(selected.id)?.tickets || []}
+          tags={suggestedTags}
           onBack={closePerson}
           onUpdate={handleUpdate}
           onDelete={setDeleteTarget}
@@ -438,7 +435,29 @@ export function PeopleScreen() {
       <ScreenHeader
         title="People"
         description="Every person who has written in — the record behind each conversation, with its lifelong timeline one click away."
-        actions={createButton}
+        actions={
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-foreground"
+              disabled={loading || filtered.length === 0}
+              onClick={handleExport}
+            >
+              <Download className="h-4 w-4" /> Export
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className={OUTLINE_BUTTON}
+              disabled={loading || error}
+              onClick={() => setImportOpen(true)}
+            >
+              <Upload className="h-4 w-4" /> Import
+            </Button>
+            {createButton}
+          </div>
+        }
       />
 
       <StatsBar stats={stats} />
@@ -455,7 +474,7 @@ export function PeopleScreen() {
           <FilterDropdown
             value={companyFilter}
             onValueChange={setCompanyFilter}
-            options={companies}
+            options={companyOptions}
             placeholder="All companies"
             height="h-9"
           />
@@ -472,6 +491,19 @@ export function PeopleScreen() {
         <div className="flex items-center justify-center rounded-xl border border-border bg-surface-subtle px-6 py-16">
           <LogoLoading size={48} aria-label="Loading people" />
         </div>
+      ) : error ? (
+        <div className="rounded-xl border border-border bg-surface-subtle">
+          <EmptyState
+            icon={Users}
+            title="Couldn't load people"
+            description="The contact directory didn't respond. Your data is safe — try again."
+            action={
+              <Button variant="outline" className={OUTLINE_BUTTON} onClick={reload}>
+                <RefreshCw className="h-4 w-4" /> Retry
+              </Button>
+            }
+          />
+        </div>
       ) : (
         <div className="space-y-5">
           <DataTable
@@ -487,13 +519,13 @@ export function PeopleScreen() {
                   description={
                     isFiltered
                       ? "Try clearing the search or the filters."
-                      : "People appear here the moment someone writes in — or add one manually."
+                      : "People appear here the moment someone writes in — or add or import them."
                   }
                   action={
                     isFiltered ? (
                       <Button
                         variant="outline"
-                        className="border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
+                        className={OUTLINE_BUTTON}
                         onClick={() => {
                           setSearch("");
                           setLifecycle("all");
@@ -539,14 +571,35 @@ export function PeopleScreen() {
                 placeholder="ada@company.com"
               />
             </Field>
-            <Field label="Company" htmlFor="person-draft-company">
-              <Input
-                id="person-draft-company"
-                value={draft.company}
-                onChange={(e) => setDraft((d) => ({ ...d, company: e.target.value }))}
-                placeholder="Company"
-              />
-            </Field>
+            {companiesAvailable ? (
+              <Field label="Company" htmlFor="person-draft-company">
+                <Select
+                  value={draft.companyId}
+                  onValueChange={(v) => setDraft((d) => ({ ...d, companyId: v }))}
+                >
+                  <SelectTrigger id="person-draft-company">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_COMPANY}>No company</SelectItem>
+                    {companies.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            ) : (
+              <Field label="Company" htmlFor="person-draft-company">
+                <Input
+                  id="person-draft-company"
+                  value={draft.company}
+                  onChange={(e) => setDraft((d) => ({ ...d, company: e.target.value }))}
+                  placeholder="Company"
+                />
+              </Field>
+            )}
           </div>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
@@ -562,6 +615,16 @@ export function PeopleScreen() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        entity="people"
+        projectId={projectId}
+        attributes={attributes}
+        companiesAvailable={companiesAvailable}
+        onImported={reload}
+      />
 
       {deleteDialog}
     </MainScreenWrapper>

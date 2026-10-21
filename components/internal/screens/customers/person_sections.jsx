@@ -1,14 +1,10 @@
 "use client";
 
-// Section bodies for the contact (person) editor. The Overview pairs the
-// record (identity, company, tags, segments, subscription) with the Recent
-// Activities rail; Timeline is the unified lifelong thread; Conversations and
-// Tickets are the linked queues; Notes keeps notes/tasks/files; Attributes
-// holds the custom data model.
+// Section bodies for the contact editor, plus the inline controls the company editor reuses.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import {
-  AtSign,
   Building2,
   Check,
   Globe,
@@ -16,10 +12,10 @@ import {
   IdCard,
   Languages,
   ListChecks,
+  Loader2,
   Mail,
   MapPin,
   MessagesSquare,
-  Phone,
   Plus,
   SlidersHorizontal,
   StickyNote,
@@ -35,6 +31,9 @@ import {
   Button,
   Checkbox,
   Input,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   Select,
   SelectContent,
   SelectItem,
@@ -51,20 +50,25 @@ import {
   SettingRow,
   SettingsList,
   StatGrid,
-  StatusPill,
 } from "@/components/internal/shared/screen_kit";
 import { cn } from "@/lib/utils";
+import { createAttribute } from "@/lib/supabase/customers";
+import { countSegments, listSegments } from "@/lib/supabase/segments";
+import { getUser } from "@/lib/supabase/user";
 import {
+  ATTRIBUTE_TYPES,
   DEFAULT_SEGMENTS,
   LIFECYCLE_MAP,
   TIMELINE_META,
   buildTimeline,
   channelIcon,
+  coerceAttribute,
+  completeRules,
   formatDate,
   formatDateTime,
   formatRelativeTime,
   initialsOf,
-  personMatchesSegment,
+  tagLabel,
 } from "./constants";
 
 export const NAV_GROUPS = [
@@ -109,37 +113,99 @@ export const NAV_GROUPS = [
         key: "notes",
         label: "Notes & tasks",
         icon: StickyNote,
-        desc: "Internal notes, follow-up tasks and shared files.",
+        desc: "Internal notes and follow-up tasks.",
       },
       {
         key: "attributes",
         label: "Attributes",
         icon: SlidersHorizontal,
-        desc: "Custom fields on this contact record.",
+        desc: "Standard and custom attributes on this contact record.",
       },
     ],
   },
 ];
 
-const INPUT_CLASS = "h-9 sm:max-w-sm";
+const NO_COMPANY = "__none";
+const UNLINKED = "__unlinked";
+const NOT_SET = "__unset";
 
-function tagLabel(t) {
-  return typeof t === "string" ? t : t.name || "";
+// A text input that saves on blur or Enter rather than on every keystroke.
+export function CommitInput({ value, onCommit, ...props }) {
+  const current = value ?? "";
+  const [draft, setDraft] = useState(current);
+  const [seed, setSeed] = useState(current);
+  if (current !== seed) {
+    setSeed(current);
+    setDraft(current);
+  }
+  return (
+    <Input
+      {...props}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft !== current) onCommit(draft);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+    />
+  );
 }
 
-// Custom segments live in localStorage per project (there is no segments
-// table yet); the editor reads the same key so membership agrees.
-function loadCustomSegments(projectId) {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(
-      `comms:segments:${projectId || "default"}`,
-    );
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+// The company a person belongs to; legacy free-text names show as unlinked.
+function CompanySelect({ person, companies, onChange, className }) {
+  const linked = person.companyId && companies.some((c) => c.id === person.companyId);
+  const value = linked ? person.companyId : person.company ? UNLINKED : NO_COMPANY;
+  return (
+    <Select
+      value={value}
+      onValueChange={(v) => {
+        if (v === UNLINKED) return;
+        onChange(v === NO_COMPANY ? null : companies.find((c) => c.id === v) || null);
+      }}
+    >
+      <SelectTrigger size="sm" className={className} aria-label="Company">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={NO_COMPANY}>No company</SelectItem>
+        {value === UNLINKED ? (
+          <SelectItem value={UNLINKED}>{person.company} (not linked)</SelectItem>
+        ) : null}
+        {companies.map((c) => (
+          <SelectItem key={c.id} value={c.id}>
+            {c.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+// Every segment (built-in + saved) this person matches, evaluated in SQL.
+function useSegmentMembership(person) {
+  const key = `${person.id}|${person.updatedAt}`;
+  const [state, setState] = useState({ key: null, segments: null });
+  useEffect(() => {
+    let alive = true;
+    listSegments({ projectId: person.projectId }).then(async (saved) => {
+      const all = [...DEFAULT_SEGMENTS, ...(saved || [])];
+      const counts = saved
+        ? await countSegments({
+            projectId: person.projectId,
+            contactId: person.id,
+            sets: Object.fromEntries(all.map((s) => [s.id, completeRules(s.rules)])),
+          })
+        : null;
+      if (!alive) return;
+      setState({ key, segments: counts ? all.filter((s) => counts[s.id] > 0) : null });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [key, person.id, person.projectId]);
+  return { loading: state.key !== key, segments: state.segments };
 }
 
 // ---- overview ----------------------------------------------------------------
@@ -149,8 +215,10 @@ function OverviewSection({
   conversations,
   tickets,
   allTags,
-  segments,
+  companies,
+  companiesAvailable,
   onField,
+  onPatch,
   onToggleTag,
   onToggleSubscription,
   onGoto,
@@ -159,13 +227,7 @@ function OverviewSection({
     () => buildTimeline({ person, conversations, tickets }),
     [person, conversations, tickets],
   );
-  const memberSegments = useMemo(() => {
-    const custom =
-      typeof window === "undefined" ? [] : loadCustomSegments(person.projectId);
-    return [...DEFAULT_SEGMENTS, ...custom, ...(segments || [])].filter((s) =>
-      personMatchesSegment(person, s),
-    );
-  }, [person, segments]);
+  const membership = useSegmentMembership(person);
 
   const personTags = (person.tags || []).map(tagLabel).filter(Boolean);
   const convoTags = useMemo(() => {
@@ -212,18 +274,18 @@ function OverviewSection({
               </Avatar>
               <div className="grid flex-1 gap-3 sm:grid-cols-2">
                 <Field label="Name" htmlFor="person-name">
-                  <Input
+                  <CommitInput
                     id="person-name"
-                    value={person.name || ""}
-                    onChange={(e) => onField("name", e.target.value)}
+                    value={person.name}
+                    onCommit={(v) => onField("name", v)}
                     placeholder="Full name"
                   />
                 </Field>
                 <Field label="Title" htmlFor="person-title">
-                  <Input
+                  <CommitInput
                     id="person-title"
-                    value={person.title || ""}
-                    onChange={(e) => onField("title", e.target.value)}
+                    value={person.title}
+                    onCommit={(v) => onField("title", v)}
                     placeholder="Head of Support"
                   />
                 </Field>
@@ -249,11 +311,12 @@ function OverviewSection({
                   title="Phone"
                   description={person.phone || "—"}
                   control={
-                    <Input
-                      value={person.phone || ""}
-                      onChange={(e) => onField("phone", e.target.value)}
+                    <CommitInput
+                      value={person.phone}
+                      onCommit={(v) => onField("phone", v)}
                       placeholder="+1 …"
                       className="h-8 w-40 text-xs"
+                      aria-label="Phone"
                     />
                   }
                 />
@@ -265,7 +328,7 @@ function OverviewSection({
                       value={person.lifecycle || "lead"}
                       onValueChange={(v) => onField("lifecycle", v)}
                     >
-                      <SelectTrigger className="h-8 w-36">
+                      <SelectTrigger className="h-8 w-36" aria-label="Lifecycle">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -282,11 +345,12 @@ function OverviewSection({
                   title="Owner"
                   description={person.owner || "Unassigned"}
                   control={
-                    <Input
-                      value={person.owner || ""}
-                      onChange={(e) => onField("owner", e.target.value)}
+                    <CommitInput
+                      value={person.owner}
+                      onCommit={(v) => onField("owner", v)}
                       placeholder="Teammate"
                       className="h-8 w-40 text-xs"
+                      aria-label="Owner"
                     />
                   }
                 />
@@ -302,29 +366,45 @@ function OverviewSection({
                 label="Location"
                 value={person.location}
                 placeholder="City, Country"
-                onChange={(v) => onField("location", v)}
+                onCommit={(v) => onField("location", v)}
               />
               <DetailLine
                 icon={Globe}
                 label="Timezone"
                 value={person.timezone}
                 placeholder="PT (UTC−8)"
-                onChange={(v) => onField("timezone", v)}
+                onCommit={(v) => onField("timezone", v)}
               />
               <DetailLine
                 icon={Languages}
                 label="Language"
                 value={person.language}
                 placeholder="English"
-                onChange={(v) => onField("language", v)}
+                onCommit={(v) => onField("language", v)}
               />
-              <DetailLine
-                icon={Building2}
-                label="Company"
-                value={person.company}
-                placeholder="Company"
-                onChange={(v) => onField("company", v)}
-              />
+              {companiesAvailable ? (
+                <div className="flex items-center justify-between gap-3 px-5 py-3">
+                  <span className="inline-flex shrink-0 items-center gap-1.5 text-sm text-text-secondary">
+                    <Building2 className="h-3.5 w-3.5 text-text-tertiary" /> Company
+                  </span>
+                  <CompanySelect
+                    person={person}
+                    companies={companies}
+                    className="max-w-52"
+                    onChange={(company) =>
+                      onPatch({ companyId: company?.id ?? null, company: company?.name ?? "" })
+                    }
+                  />
+                </div>
+              ) : (
+                <DetailLine
+                  icon={Building2}
+                  label="Company"
+                  value={person.company}
+                  placeholder="Company"
+                  onCommit={(v) => onField("company", v)}
+                />
+              )}
             </SettingsList>
           </SectionCard>
 
@@ -378,9 +458,17 @@ function OverviewSection({
             title="Segments"
             description="Every audience this person currently qualifies for."
           >
-            {memberSegments.length ? (
+            {membership.loading ? (
+              <span className="inline-flex items-center gap-2 text-sm text-text-tertiary">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking segments…
+              </span>
+            ) : membership.segments === null ? (
+              <p className="text-sm text-text-tertiary">
+                Couldn&apos;t check segment membership.
+              </p>
+            ) : membership.segments.length ? (
               <div className="flex flex-wrap gap-1.5">
-                {memberSegments.map((s) => (
+                {membership.segments.map((s) => (
                   <span
                     key={s.id}
                     className="rounded-full border border-violet-400/30 bg-violet-400/10 px-2.5 py-1 text-xs font-medium text-violet-200"
@@ -390,9 +478,7 @@ function OverviewSection({
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-text-tertiary">
-                Not in any segment yet.
-              </p>
+              <p className="text-sm text-text-tertiary">Not in any segment yet.</p>
             )}
           </SectionCard>
 
@@ -410,6 +496,7 @@ function OverviewSection({
                   <Switch
                     checked={person.subscribedEmail !== false}
                     onCheckedChange={(v) => onToggleSubscription("email", v)}
+                    aria-label="Email subscription"
                   />
                 }
               />
@@ -424,6 +511,7 @@ function OverviewSection({
                   <Switch
                     checked={!!person.subscribedSms}
                     onCheckedChange={(v) => onToggleSubscription("sms", v)}
+                    aria-label="SMS subscription"
                   />
                 }
               />
@@ -468,16 +556,17 @@ function OverviewSection({
   );
 }
 
-function DetailLine({ icon: Icon, label, value, placeholder, onChange }) {
+function DetailLine({ icon: Icon, label, value, placeholder, onCommit }) {
   return (
     <div className="flex items-center justify-between gap-3 px-5 py-3">
       <span className="inline-flex shrink-0 items-center gap-1.5 text-sm text-text-secondary">
         <Icon className="h-3.5 w-3.5 text-text-tertiary" /> {label}
       </span>
-      <Input
-        value={value || ""}
-        onChange={(e) => onChange(e.target.value)}
+      <CommitInput
+        value={value}
+        onCommit={onCommit}
         placeholder={placeholder}
+        aria-label={label}
         className="h-8 max-w-52 text-right text-xs"
       />
     </div>
@@ -489,57 +578,56 @@ function TagPicker({ allTags, active, onToggle }) {
   const [draft, setDraft] = useState("");
   const names = [...new Set([...(allTags || []).map(tagLabel), ...active])].filter(Boolean);
   return (
-    <div className="relative">
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
-        onClick={() => setOpen((o) => !o)}
-      >
-        <Plus className="h-3.5 w-3.5" /> Add
-      </Button>
-      {open ? (
-        <div className="absolute right-0 z-20 mt-2 w-56 rounded-xl border border-border bg-surface-subtle p-2 shadow-xl">
-          <Input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="New tag…"
-            className="mb-2 h-8 text-xs"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && draft.trim()) {
-                onToggle(draft.trim());
-                setDraft("");
-              }
-            }}
-          />
-          <div className="max-h-48 overflow-y-auto">
-            {names.length === 0 ? (
-              <p className="px-2 py-2 text-xs text-text-tertiary">
-                Type a name and hit Enter.
-              </p>
-            ) : (
-              names.map((n) => {
-                const on = active.some(
-                  (a) => a.toLowerCase() === n.toLowerCase(),
-                );
-                return (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => onToggle(n)}
-                    className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-surface-active"
-                  >
-                    {n}
-                    {on ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : null}
-                  </button>
-                );
-              })
-            )}
-          </div>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
+        >
+          <Plus className="h-3.5 w-3.5" /> Add
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-56 border-border bg-surface-subtle p-2">
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="New tag…"
+          className="mb-2 h-8 text-xs"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && draft.trim()) {
+              onToggle(draft.trim());
+              setDraft("");
+            }
+          }}
+        />
+        <div className="max-h-48 overflow-y-auto">
+          {names.length === 0 ? (
+            <p className="px-2 py-2 text-xs text-text-tertiary">
+              Type a name and hit Enter.
+            </p>
+          ) : (
+            names.map((n) => {
+              const on = active.some(
+                (a) => a.toLowerCase() === n.toLowerCase(),
+              );
+              return (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => onToggle(n)}
+                  className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-surface-active"
+                >
+                  {n}
+                  {on ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : null}
+                </button>
+              );
+            })
+          )}
         </div>
-      ) : null}
-    </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -753,15 +841,10 @@ function NotesSection({ person, onAddNote, onDeleteNote, onAddTask, onToggleTask
   const [tab, setTab] = useState("notes");
   const [noteDraft, setNoteDraft] = useState("");
   const [taskDraft, setTaskDraft] = useState("");
-  const files = useMemo(() => {
-    const out = [];
-    return out;
-  }, []);
 
   const tabs = [
-    { key: "notes", label: `Notes (${(person.notes || []).length})`, icon: StickyNote },
-    { key: "tasks", label: `Tasks (${(person.tasks || []).length})`, icon: ListChecks },
-    { key: "files", label: `Files (${files.length})`, icon: AtSign },
+    { key: "notes", label: `Notes (${(person.notes || []).length})` },
+    { key: "tasks", label: `Tasks (${(person.tasks || []).length})` },
   ];
 
   return (
@@ -885,7 +968,11 @@ function NotesSection({ person, onAddNote, onDeleteNote, onAddTask, onToggleTask
                   key={t.id}
                   className="flex items-center gap-3 rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5"
                 >
-                  <Checkbox checked={!!t.done} onCheckedChange={() => onToggleTask(t.id)} />
+                  <Checkbox
+                    checked={!!t.done}
+                    onCheckedChange={() => onToggleTask(t.id)}
+                    aria-label={`Mark “${t.title}” ${t.done ? "not done" : "done"}`}
+                  />
                   <span
                     className={cn(
                       "flex-1 text-sm",
@@ -911,40 +998,156 @@ function NotesSection({ person, onAddNote, onDeleteNote, onAddTask, onToggleTask
           )}
         </div>
       ) : null}
-
-      {tab === "files" ? (
-        <EmptyState
-          icon={AtSign}
-          title="No files yet"
-          description="Attachments shared in conversations appear here."
-        />
-      ) : null}
     </SectionCard>
   );
 }
 
 // ---- attributes -------------------------------------------------------------------
 
-function AttributesSection({ person, onField, onCustom, onDeleteCustom }) {
-  const [keyDraft, setKeyDraft] = useState("");
-  const [valueDraft, setValueDraft] = useState("");
+// One typed control per attribute definition; values save on change/blur.
+export function AttributeControl({ attribute, value, onChange }) {
+  const label = attribute.label;
+  if (attribute.type === "boolean") {
+    return (
+      <Switch
+        checked={value === true}
+        onCheckedChange={(v) => onChange(v)}
+        aria-label={label}
+      />
+    );
+  }
+  if (attribute.type === "select") {
+    return (
+      <Select
+        value={value === undefined || value === null || value === "" ? NOT_SET : String(value)}
+        onValueChange={(v) => onChange(v === NOT_SET ? null : v)}
+      >
+        <SelectTrigger size="sm" className="w-40" aria-label={label}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={NOT_SET}>Not set</SelectItem>
+          {attribute.options.map((o) => (
+            <SelectItem key={o} value={o}>
+              {o}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  }
+  return (
+    <CommitInput
+      type={attribute.type === "number" ? "number" : attribute.type === "date" ? "date" : "text"}
+      value={value === undefined || value === null ? "" : String(value)}
+      onCommit={(v) => {
+        const next = coerceAttribute(attribute.type, v);
+        if (v.trim() !== "" && next === undefined) {
+          toast.error(`“${v}” isn't a valid ${attribute.type} for ${label}.`);
+          return;
+        }
+        onChange(next ?? null);
+      }}
+      className="h-8 w-40 text-xs"
+      aria-label={label}
+    />
+  );
+}
+
+// Add a workspace attribute definition (comms.custom_fields) for an entity.
+export function NewAttributeForm({ projectId, entity, position, onCreated }) {
+  const [label, setLabel] = useState("");
+  const [type, setType] = useState("text");
+  const [options, setOptions] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function handleCreate() {
+    const list = options.split(",").map((o) => o.trim()).filter(Boolean);
+    if (type === "select" && list.length === 0) {
+      toast.error("Give the list at least one option.");
+      return;
+    }
+    setSaving(true);
+    const user = await getUser();
+    const created = await createAttribute({
+      projectId,
+      entity,
+      label,
+      type,
+      options: list,
+      position,
+      createdBy: user?.id ?? null,
+    });
+    setSaving(false);
+    if (!created) {
+      toast.error("Couldn't add the attribute — one with that name may already exist.");
+      return;
+    }
+    onCreated(created);
+    setLabel("");
+    setOptions("");
+    toast.success(`Added “${created.label}”`);
+  }
+
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row">
+      <Input
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+        placeholder="Attribute name…"
+        className="h-9 flex-1"
+        aria-label="Attribute name"
+      />
+      <Select value={type} onValueChange={setType}>
+        <SelectTrigger className="h-9 sm:w-36" aria-label="Attribute type">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {ATTRIBUTE_TYPES.map((t) => (
+            <SelectItem key={t.value} value={t.value}>
+              {t.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {type === "select" ? (
+        <Input
+          value={options}
+          onChange={(e) => setOptions(e.target.value)}
+          placeholder="Options, comma separated"
+          className="h-9 flex-1"
+          aria-label="List options"
+        />
+      ) : null}
+      <Button
+        type="button"
+        variant="outline"
+        className="border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
+        disabled={!label.trim() || saving}
+        onClick={() => void handleCreate()}
+      >
+        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+        Add attribute
+      </Button>
+    </div>
+  );
+}
+
+function AttributesSection({ person, attributes, onAttributeCreated, onCustom, onDeleteCustom }) {
+  const defs = (attributes || []).filter((a) => a.entity === "contact");
   const custom = person.custom || {};
+  const extra = Object.keys(custom).filter((k) => !defs.some((a) => a.key === k));
   return (
     <div className="space-y-6">
       <SectionCard
         title="Standard attributes"
-        description="Synced from conversations and integrations where available."
+        description="Set by conversations, the Messenger and imports."
       >
         <SettingsList>
           <SettingRow title="Email" description={person.email || "—"} />
+          <SettingRow title="User ID" description={person.externalId || "—"} />
           <SettingRow title="Phone" description={person.phone || "—"} />
-          <SettingRow
-            title="Company"
-            description={person.company || "—"}
-            control={
-              <span className="text-xs text-text-secondary">{person.website || ""}</span>
-            }
-          />
+          <SettingRow title="Company" description={person.company || "—"} />
           <SettingRow
             title="Created"
             description={formatDateTime(person.createdAt)}
@@ -968,27 +1171,43 @@ function AttributesSection({ person, onField, onCustom, onDeleteCustom }) {
 
       <SectionCard
         title="Custom attributes"
-        description="Workspace-specific fields — plan, seats, anything the business tracks."
+        description="Workspace-defined fields on every person — plan, seats, anything the business tracks."
       >
-        {Object.keys(custom).length === 0 ? (
+        {defs.length === 0 && extra.length === 0 ? (
           <EmptyState
             icon={TagsIcon}
             title="No custom attributes"
-            description="Add the first field below."
+            description="Define the first one below; it appears on every person."
           />
         ) : (
           <div className="mb-4">
             <SettingsList>
-              {Object.entries(custom).map(([k, v]) => (
+              {defs.map((a) => (
+                <SettingRow
+                  key={a.id}
+                  title={a.label}
+                  description={a.key}
+                  control={
+                    <AttributeControl
+                      attribute={a}
+                      value={custom[a.key]}
+                      onChange={(v) => onCustom(a.key, v)}
+                    />
+                  }
+                />
+              ))}
+              {extra.map((k) => (
                 <SettingRow
                   key={k}
                   title={k}
+                  description="Not defined for this workspace"
                   control={
                     <span className="flex items-center gap-2">
-                      <Input
-                        value={String(v ?? "")}
-                        onChange={(e) => onCustom(k, e.target.value)}
+                      <CommitInput
+                        value={String(custom[k] ?? "")}
+                        onCommit={(v) => onCustom(k, v)}
                         className="h-8 w-40 text-xs"
+                        aria-label={k}
                       />
                       <button
                         type="button"
@@ -1005,33 +1224,12 @@ function AttributesSection({ person, onField, onCustom, onDeleteCustom }) {
             </SettingsList>
           </div>
         )}
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Input
-            value={keyDraft}
-            onChange={(e) => setKeyDraft(e.target.value)}
-            placeholder="Field name…"
-            className="h-9 flex-1"
-          />
-          <Input
-            value={valueDraft}
-            onChange={(e) => setValueDraft(e.target.value)}
-            placeholder="Value…"
-            className="h-9 flex-1"
-          />
-          <Button
-            type="button"
-            variant="outline"
-            className="border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
-            disabled={!keyDraft.trim()}
-            onClick={() => {
-              onCustom(keyDraft.trim(), valueDraft);
-              setKeyDraft("");
-              setValueDraft("");
-            }}
-          >
-            <Plus className="h-4 w-4" /> Add field
-          </Button>
-        </div>
+        <NewAttributeForm
+          projectId={person.projectId}
+          entity="contact"
+          position={defs.length}
+          onCreated={onAttributeCreated}
+        />
       </SectionCard>
     </div>
   );

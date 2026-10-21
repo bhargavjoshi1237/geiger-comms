@@ -1,17 +1,17 @@
 "use client";
 
-// Companies — accounts derived from the people directory (grouped by the
-// company field; there is no separate companies table). Mirrors the suite
-// list pattern: header + create, KPI bar, toolbar filters, a DataTable and
-// pagination. Selecting a row swaps to the company editor.
+// Companies: account records people link to (suite list pattern), with a one-click link for people carrying only a company name.
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   Building2,
   Download,
+  Link2,
+  Loader2,
   Pencil,
   Plus,
+  RefreshCw,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -45,59 +45,91 @@ import {
 } from "@/components/internal/shared/screen_kit";
 import FilterDropdown from "../overview/filter_dropdown";
 import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
+import { getUser } from "@/lib/supabase/user";
+import { setContactsCompany } from "@/lib/supabase/customers";
 import {
-  deriveCompanies,
+  createCompany,
+  normalizeDomain,
+  saveCompanies,
+  softDeleteCompany,
+  updateCompany,
+} from "@/lib/supabase/companies";
+import {
   formatDate,
   formatRelativeTime,
+  restoreRow,
+  summarizeCompanies,
+  unlinkedCompanyGroups,
 } from "./constants";
+import { downloadCsv } from "@/components/internal/shared/csv";
+import { IMPORT_BATCH, bareCompanyInput, exportRows } from "./import_plan";
+import { ImportDialog } from "./import_dialog";
 import { useCustomers } from "./use_customers";
 import { CompanyDetailScreen } from "./company_detail";
+
+const EMPTY_DRAFT = { name: "", domain: "", owner: "" };
+
+const OUTLINE_BUTTON =
+  "border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground";
 
 export function CompaniesScreen() {
   const { companyId, openCompany, closeCompany } = useWorkspaceUrl();
   const {
+    projectId,
     people,
     setPeople,
+    companies,
+    setCompanies,
+    companiesAvailable,
+    attributes,
+    setAttributes,
     conversations,
     tickets,
     loading,
-    conversationsOf,
+    error,
+    reload,
     ticketsOf,
   } = useCustomers();
 
   const [search, setSearch] = useState("");
   const [ownerFilter, setOwnerFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
-  const [draft, setDraft] = useState({ name: "", domain: "", owner: "" });
+  const [importOpen, setImportOpen] = useState(false);
+  const [draft, setDraft] = useState(EMPTY_DRAFT);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [linking, setLinking] = useState(false);
 
-  const companies = useMemo(
-    () => deriveCompanies(people, conversations),
-    [people, conversations],
+  const rows = useMemo(
+    () =>
+      summarizeCompanies(companies, people, conversations).map((c) => ({
+        ...c,
+        tickets: ticketsOf(c.conversations),
+      })),
+    [companies, people, conversations, ticketsOf],
   );
+
+  const unlinked = useMemo(() => unlinkedCompanyGroups(people), [people]);
+  const unlinkedPeople = unlinked.reduce((n, g) => n + g.people.length, 0);
 
   const owners = useMemo(
     () => [
       { value: "all", label: "All owners" },
-      ...[...new Set(companies.map((c) => c.owner).filter(Boolean))]
+      ...[...new Set(rows.map((c) => c.owner).filter(Boolean))]
         .sort((a, b) => a.localeCompare(b))
         .map((o) => ({ value: o, label: o })),
     ],
-    [companies],
+    [rows],
   );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return companies.filter((c) => {
+    return rows.filter((c) => {
       if (ownerFilter !== "all" && c.owner !== ownerFilter) return false;
-      if (
-        q &&
-        !`${c.name} ${c.domain} ${c.website}`.toLowerCase().includes(q)
-      )
+      if (q && !`${c.name} ${c.domain} ${c.website}`.toLowerCase().includes(q))
         return false;
       return true;
     });
-  }, [companies, search, ownerFilter]);
+  }, [rows, search, ownerFilter]);
 
   const pager = usePagination(filtered, {
     resetKey: `${search}|${ownerFilter}`,
@@ -106,72 +138,148 @@ export function CompaniesScreen() {
   const isFiltered = ownerFilter !== "all" || search.trim() !== "";
 
   const stats = useMemo(() => {
-    const contacts = companies.reduce((n, c) => n + c.contactCount, 0);
-    const open = companies.reduce((n, c) => n + c.openCount, 0);
-    const unassigned = companies.filter((c) => !c.owner).length;
+    const linked = rows.reduce((n, c) => n + c.contactCount, 0);
+    const open = rows.reduce((n, c) => n + c.openCount, 0);
+    const ticketCount = new Set(rows.flatMap((c) => c.tickets.map((t) => t.id))).size;
     return [
       {
         label: "Companies",
-        value: String(companies.length),
-        footer: `${contacts.toLocaleString("en-US")} contacts in total`,
+        value: String(rows.length),
+        footer: `${linked.toLocaleString("en-US")} people linked`,
       },
-      {
-        label: "Open conversations",
-        value: String(open),
-        footer: "Across all companies",
-      },
-      {
-        label: "Tickets",
-        value: String(tickets.length),
-        footer: "Linked across companies",
-      },
+      { label: "Open conversations", value: String(open), footer: "Across all companies" },
+      { label: "Tickets", value: String(ticketCount), footer: `Of ${tickets.length} in this workspace` },
       {
         label: "No owner",
-        value: String(unassigned),
+        value: String(rows.filter((c) => !c.owner).length),
         footer: "Need an account owner",
       },
     ];
-  }, [companies, tickets]);
+  }, [rows, tickets]);
 
-  function handleCreate() {
-    if (!draft.name.trim()) {
+  async function handleCreate() {
+    const name = draft.name.trim();
+    if (!name) {
       toast.error("Give the company a name.");
       return;
     }
-    const person = {
-      id: crypto.randomUUID(),
-      name: `Contact at ${draft.name.trim()}`,
-      email: draft.domain.trim()
-        ? `hello@${draft.domain.trim().replace(/^www\./, "")}`
-        : "",
-      company: draft.name.trim(),
-      website: draft.domain.trim(),
-      owner: draft.owner.trim(),
-      lifecycle: "lead",
-      tags: [],
-      notes: [],
-      tasks: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    setPeople((prev) => [person, ...prev]);
+    const domain = normalizeDomain(draft.domain);
+    if (domain && companies.some((c) => c.domain === domain)) {
+      toast.error(`A company with the domain ${domain} already exists.`);
+      return;
+    }
+    const now = new Date().toISOString();
+    const input = { id: crypto.randomUUID(), name, domain, owner: draft.owner.trim(), projectId };
     setCreateOpen(false);
-    setDraft({ name: "", domain: "", owner: "" });
-    toast.success("Company added");
+    setDraft(EMPTY_DRAFT);
+    setCompanies((prev) => [
+      { ...input, externalId: "", website: "", industry: "", size: null, plan: "", monthlySpend: null, custom: {}, metadata: {}, createdAt: now, updatedAt: now },
+      ...prev,
+    ]);
+    const user = await getUser();
+    const created = await createCompany({ ...input, createdBy: user?.id ?? null });
+    if (!created) {
+      setCompanies((prev) => prev.filter((c) => c.id !== input.id));
+      toast.error("Couldn't create the company.");
+      return;
+    }
+    setCompanies((prev) => prev.map((c) => (c.id === created.id ? created : c)));
+    toast.success("Company created");
+    openCompany(created.id);
   }
 
-  // A company is a lens on people — deleting removes its people.
-  function handleDelete(company) {
+  // Optimistic edit; a rename also rewrites linked people's company name (as the database does).
+  async function handleUpdate(company, patch) {
+    const before = Object.fromEntries(Object.keys(patch).map((k) => [k, company[k]]));
+    const rename = (name) =>
+      setPeople((prev) =>
+        prev.map((p) => (p.companyId === company.id ? { ...p, company: name } : p)),
+      );
+    setCompanies((prev) => prev.map((c) => (c.id === company.id ? { ...c, ...patch } : c)));
+    if ("name" in patch) rename(patch.name);
+    const saved = await updateCompany(company.id, patch);
+    if (!saved) {
+      // Revert only this patch's keys so a concurrent edit survives the rollback.
+      setCompanies((prev) => prev.map((c) => (c.id === company.id ? { ...c, ...before } : c)));
+      if ("name" in patch) rename(before.name);
+      toast.error("Couldn't save the company.");
+      return null;
+    }
+    setCompanies((prev) => prev.map((c) => (c.id === saved.id ? saved : c)));
+    return saved;
+  }
+
+  // Soft delete; the database unlinks its people, so mirror that locally.
+  async function handleDelete(company) {
     setDeleteTarget(null);
-    const ids = new Set(company.people.map((p) => p.id));
-    setPeople((prev) => prev.filter((p) => !ids.has(p.id)));
+    const index = companies.findIndex((c) => c.id === company.id);
+    const original = companies[index];
+    const members = new Map(
+      people.filter((p) => p.companyId === company.id).map((p) => [p.id, p.company]),
+    );
+    setCompanies((prev) => prev.filter((c) => c.id !== company.id));
+    setPeople((prev) =>
+      prev.map((p) => (p.companyId === company.id ? { ...p, companyId: null, company: "" } : p)),
+    );
     if (companyId === company.id) closeCompany();
+    const ok = await softDeleteCompany(company.id);
+    if (!ok) {
+      setCompanies((prev) => restoreRow(prev, original, index));
+      setPeople((prev) =>
+        prev.map((p) =>
+          members.has(p.id) ? { ...p, companyId: company.id, company: members.get(p.id) } : p,
+        ),
+      );
+      toast.error("Couldn't delete the company.");
+      return;
+    }
     toast.success(`Deleted “${company.name}”.`);
   }
 
+  // Links people's free-text company names to records, creating the missing ones.
+  async function handleLinkUnlinked() {
+    setLinking(true);
+    const user = await getUser();
+    const byName = new Map(companies.map((c) => [c.name.toLowerCase(), c]));
+    const missing = unlinked.filter((g) => !byName.has(g.name.toLowerCase()));
+    let created = 0;
+    for (let i = 0; i < missing.length; i += IMPORT_BATCH) {
+      const saved = await saveCompanies(
+        missing
+          .slice(i, i + IMPORT_BATCH)
+          .map((g) => bareCompanyInput({ name: g.name, projectId, createdBy: user?.id ?? null })),
+      );
+      for (const c of saved || []) byName.set(c.name.toLowerCase(), c);
+      created += saved?.length || 0;
+    }
+    let linked = 0;
+    for (const group of unlinked) {
+      const company = byName.get(group.name.toLowerCase());
+      if (company && (await setContactsCompany(group.people.map((p) => p.id), company))) {
+        linked += group.people.length;
+      }
+    }
+    setLinking(false);
+    if (linked === unlinkedPeople) {
+      toast.success(
+        `Linked ${linked} ${linked === 1 ? "person" : "people"}${created ? ` · ${created} new compan${created === 1 ? "y" : "ies"}` : ""}.`,
+      );
+    } else {
+      toast.error(`Linked ${linked} of ${unlinkedPeople} people — try again for the rest.`);
+    }
+    reload();
+  }
+
+  function handleExport() {
+    downloadCsv(
+      `companies-${new Date().toISOString().slice(0, 10)}.csv`,
+      exportRows("companies", filtered, attributes),
+    );
+  }
+
   const selected = useMemo(
-    () => (companyId ? companies.find((c) => c.id === companyId) || null : null),
-    [companyId, companies],
+    () => (companyId ? rows.find((c) => c.id === companyId) || null : null),
+    [companyId, rows],
   );
 
   const columns = [
@@ -187,8 +295,8 @@ export function CompaniesScreen() {
           </Avatar>
           <div className="min-w-0">
             <p className="truncate font-medium text-foreground">{row.name}</p>
-            {row.website ? (
-              <p className="truncate text-xs text-text-secondary">{row.website}</p>
+            {row.domain || row.website ? (
+              <p className="truncate text-xs text-text-secondary">{row.domain || row.website}</p>
             ) : null}
           </div>
         </div>
@@ -196,11 +304,9 @@ export function CompaniesScreen() {
     },
     {
       key: "contacts",
-      header: "Contacts",
+      header: "People",
       render: (row) => (
-        <span className="text-sm tabular-nums text-foreground">
-          {row.contactCount}
-        </span>
+        <span className="text-sm tabular-nums text-foreground">{row.contactCount}</span>
       ),
     },
     {
@@ -211,6 +317,13 @@ export function CompaniesScreen() {
           {row.openCount}
           <span className="text-text-tertiary"> / {row.conversationCount}</span>
         </span>
+      ),
+    },
+    {
+      key: "plan",
+      header: "Plan",
+      render: (row) => (
+        <span className="text-sm text-text-secondary">{row.plan || "—"}</span>
       ),
     },
     {
@@ -269,9 +382,9 @@ export function CompaniesScreen() {
           <DialogDescription>
             Are you sure you want to delete{" "}
             <span className="font-medium text-foreground">{deleteTarget?.name}</span>?
-            Its {deleteTarget?.contactCount || 0} contact
-            {(deleteTarget?.contactCount || 0) === 1 ? "" : "s"} go with it —
-            conversations keep their history.
+            Its {deleteTarget?.contactCount || 0}{" "}
+            {(deleteTarget?.contactCount || 0) === 1 ? "person stays" : "people stay"} in
+            People, just without a company.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
@@ -294,9 +407,10 @@ export function CompaniesScreen() {
       <>
         <CompanyDetailScreen
           company={selected}
-          conversationsOf={conversationsOf}
-          ticketsOf={ticketsOf}
+          attributes={attributes}
+          onAttributeCreated={(attr) => setAttributes((prev) => [...prev, attr])}
           onBack={closeCompany}
+          onUpdate={(patch) => handleUpdate(selected, patch)}
           onDelete={setDeleteTarget}
         />
         {deleteDialog}
@@ -307,32 +421,37 @@ export function CompaniesScreen() {
   const createButton = (
     <Button
       className="bg-primary text-primary-foreground hover:bg-primary/90"
+      disabled={!companiesAvailable}
       onClick={() => setCreateOpen(true)}
     >
       <Plus className="h-4 w-4" /> Add company
     </Button>
   );
 
+  const unavailable = !loading && (error || !companiesAvailable);
+
   return (
     <MainScreenWrapper>
       <ScreenHeader
-        title={`Companies (${companies.length.toLocaleString("en-US")})`}
-        description="Accounts rolled up from the people directory — contacts, open threads and ownership at a glance."
+        title={`Companies (${rows.length.toLocaleString("en-US")})`}
+        description="Accounts and the people who belong to them — contacts, open threads and ownership at a glance."
         actions={
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"
               size="sm"
               className="text-muted-foreground hover:text-foreground"
-              onClick={() => toast.success("Export started — check back shortly.")}
+              disabled={loading || filtered.length === 0}
+              onClick={handleExport}
             >
               <Download className="h-4 w-4" /> Export
             </Button>
             <Button
               variant="outline"
               size="sm"
-              className="border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
-              onClick={() => toast.success("Drop a CSV to import companies.")}
+              className={OUTLINE_BUTTON}
+              disabled={loading || unavailable}
+              onClick={() => setImportOpen(true)}
             >
               <Upload className="h-4 w-4" /> Import
             </Button>
@@ -342,6 +461,30 @@ export function CompaniesScreen() {
       />
 
       <StatsBar stats={stats} />
+
+      {!loading && companiesAvailable && unlinked.length ? (
+        <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface-subtle px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-foreground">
+              {unlinkedPeople} {unlinkedPeople === 1 ? "person has" : "people have"} a company
+              name but no company record
+            </p>
+            <p className="text-sm text-text-secondary">
+              {unlinked.length} name{unlinked.length === 1 ? "" : "s"} — link them to matching
+              companies, creating the ones that don&apos;t exist yet.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            className={OUTLINE_BUTTON}
+            disabled={linking}
+            onClick={() => void handleLinkUnlinked()}
+          >
+            {linking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+            Link to companies
+          </Button>
+        </div>
+      ) : null}
 
       <Toolbar>
         <div className="flex items-center gap-2">
@@ -365,6 +508,23 @@ export function CompaniesScreen() {
         <div className="flex items-center justify-center rounded-xl border border-border bg-surface-subtle px-6 py-16">
           <LogoLoading size={48} aria-label="Loading companies" />
         </div>
+      ) : unavailable ? (
+        <div className="rounded-xl border border-border bg-surface-subtle">
+          <EmptyState
+            icon={Building2}
+            title="Couldn't load companies"
+            description={
+              error
+                ? "The contact directory didn't respond. Try again."
+                : "Company records aren't available in this workspace's database yet."
+            }
+            action={
+              <Button variant="outline" className={OUTLINE_BUTTON} onClick={reload}>
+                <RefreshCw className="h-4 w-4" /> Retry
+              </Button>
+            }
+          />
+        </div>
       ) : (
         <div className="space-y-5">
           <DataTable
@@ -380,13 +540,13 @@ export function CompaniesScreen() {
                   description={
                     isFiltered
                       ? "Try clearing the search or the owner filter."
-                      : "Companies appear once people carry a company name."
+                      : "Add a company, import a CSV, or link people's company names."
                   }
                   action={
                     isFiltered ? (
                       <Button
                         variant="outline"
-                        className="border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
+                        className={OUTLINE_BUTTON}
                         onClick={() => {
                           setSearch("");
                           setOwnerFilter("all");
@@ -411,7 +571,7 @@ export function CompaniesScreen() {
           <DialogHeader>
             <DialogTitle>Add company</DialogTitle>
             <DialogDescription>
-              Starts the account with a first contact you can fill in later.
+              An account record people can be linked to. The domain must be unique.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">
@@ -447,13 +607,23 @@ export function CompaniesScreen() {
             <Button
               type="button"
               className="bg-primary text-primary-foreground hover:bg-primary/90"
-              onClick={handleCreate}
+              onClick={() => void handleCreate()}
             >
               Add company
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        entity="companies"
+        projectId={projectId}
+        attributes={attributes}
+        companiesAvailable={companiesAvailable}
+        onImported={reload}
+      />
 
       {deleteDialog}
     </MainScreenWrapper>

@@ -1,59 +1,60 @@
 "use client";
 
-// Loads everything the Customers area needs: people (comms.contacts),
-// conversations + tickets for counts and the unified timeline, and tags.
-// Falls back to rich demo data when Supabase is unconfigured or empty so the
-// screens still demonstrate the full surface.
+// Loads People/Companies data (people, companies, attributes, conversations, tickets, tags); a failed people read sets error, a failed companies read clears companiesAvailable.
 
-import { useEffect, useMemo, useState } from "react";
-import { listContacts } from "@/lib/supabase/customers";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { listAttributes, listContacts } from "@/lib/supabase/customers";
+import { listCompanies } from "@/lib/supabase/companies";
 import { listConversations } from "@/lib/supabase/comms";
-import { listTickets } from "@/lib/supabase/tickets";
-import { listTags, listTagsForConversations } from "@/lib/supabase/tags";
+import { listTickets, ticketConversationIds } from "@/lib/supabase/tickets";
+import { listTags } from "@/lib/supabase/tags";
 import { useOptionalProject } from "@/context/project-context";
-import { DEMO_PEOPLE } from "./constants";
 
 export function useCustomers() {
   const { projectId } = useOptionalProject() ?? {};
   const [people, setPeople] = useState([]);
+  const [companies, setCompanies] = useState([]);
+  const [companiesAvailable, setCompaniesAvailable] = useState(true);
+  const [attributes, setAttributes] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [tickets, setTickets] = useState([]);
   const [tags, setTags] = useState([]);
-  const [tagsByConversation, setTagsByConversation] = useState({});
   const [loading, setLoading] = useState(true);
-  const [demo, setDemo] = useState(false);
+  const [error, setError] = useState(false);
+  const [version, setVersion] = useState(0);
 
   useEffect(() => {
     let alive = true;
     Promise.all([
       listContacts({ projectId }),
+      listCompanies({ projectId }),
+      listAttributes({ projectId }),
       listConversations({ projectId }),
       listTickets({ projectId }),
       listTags({ projectId }),
-    ]).then(async ([contacts, convos, ticketRows, tagRows]) => {
+    ]).then(([contacts, companyRows, attributeRows, convos, ticketRows, tagRows]) => {
       if (!alive) return;
-      const rows = contacts && contacts.length ? contacts : null;
-      setPeople(rows || DEMO_PEOPLE);
-      setDemo(!rows);
+      setPeople(contacts ?? []);
+      setError(contacts === null);
+      setCompanies(companyRows ?? []);
+      setCompaniesAvailable(companyRows !== null);
+      setAttributes(attributeRows ?? []);
       setConversations(convos || []);
       setTickets(ticketRows || []);
       setTags(tagRows || []);
-      const ids = (convos || []).map((c) => c.id).filter(Boolean);
-      if (ids.length) {
-        const map = await listTagsForConversations(ids);
-        if (alive) setTagsByConversation(map || {});
-      } else {
-        setTagsByConversation({});
-      }
       setLoading(false);
     });
     return () => {
       alive = false;
     };
-  }, [projectId]);
+  }, [projectId, version]);
 
-  // Conversations touching a person — by contact_id first, email fallback for
-  // legacy rows that were never back-filled.
+  const reload = useCallback(() => {
+    setLoading(true);
+    setVersion((v) => v + 1);
+  }, []);
+
+  // Conversations touching a person: by contact_id, with an email fallback for legacy rows never back-filled.
   const conversationsOf = useMemo(() => {
     const byId = new Map();
     const byEmail = new Map();
@@ -80,27 +81,30 @@ export function useCustomers() {
     };
   }, [conversations]);
 
-  // Tickets touching a person — through the linked conversation.
-  const ticketsOf = useMemo(() => {
-    const convToPerson = new Map();
-    return (person, personConvos) => {
+  // Tickets touching a set of conversations, through the origin thread or a ticket_links link.
+  const ticketsOf = useMemo(
+    () => (personConvos) => {
       const convIds = new Set((personConvos || []).map((c) => c.id));
-      return tickets.filter(
-        (t) => convIds.has(t.conversationId) || (t.description || "").includes(person.name),
-      );
-    };
-  }, [tickets]);
+      return tickets.filter((t) => ticketConversationIds(t).some((id) => convIds.has(id)));
+    },
+    [tickets],
+  );
 
   return {
     projectId,
     people,
     setPeople,
+    companies,
+    setCompanies,
+    companiesAvailable,
+    attributes,
+    setAttributes,
     conversations,
     tickets,
     tags,
-    tagsByConversation,
     loading,
-    demo,
+    error,
+    reload,
     conversationsOf,
     ticketsOf,
   };
