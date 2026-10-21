@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Clock, Send, Trash2, UserPlus } from "lucide-react";
+import { Clock, Link2, Send, Trash2, UserPlus } from "lucide-react";
 
 import {
   DataTable,
@@ -23,6 +23,7 @@ export default function InvitationsTab({
   roles,
   roleById,
   onResend,
+  onCopyLink,
   onRevoke,
   onInvite,
 }) {
@@ -98,6 +99,7 @@ export default function InvitationsTab({
             label={`Actions for ${m.email}`}
             items={[
               { icon: Send, label: "Resend", onSelect: () => onResend(m) },
+              { icon: Link2, label: "Get invite link", onSelect: () => onCopyLink(m) },
               { separator: true },
               {
                 icon: Trash2,

@@ -2,14 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ShieldCheck, UserPlus } from "lucide-react";
+import { Check, Copy, ShieldCheck, UserPlus } from "lucide-react";
 
 import { MainScreenWrapper } from "@/components/internal/shared/screen_wrappers";
 import {
   ScreenHeader,
   StatsBar,
 } from "@/components/internal/shared/screen_kit";
-import { Button, LogoLoading, Tabs, TabsList, TabsTrigger } from "@geiger/ui";
+import { Button, Input, LogoLoading, Tabs, TabsList, TabsTrigger } from "@geiger/ui";
 import {
   Dialog,
   DialogContent,
@@ -36,6 +36,75 @@ const TABS = [
   { key: "groups", label: "Groups" },
   { key: "activity", label: "Activity" },
 ];
+
+function CopyLinkButton({ value }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="shrink-0 gap-1.5 border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {
+          toast.error("Couldn't copy to clipboard — select the link and copy it instead.");
+        }
+      }}
+    >
+      {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+      {copied ? "Copied" : "Copy"}
+    </Button>
+  );
+}
+
+// Accept links the server returned instead of emailing them (email not set up, a failed send, or "Get invite link").
+function InviteLinksDialog({ links, onClose }) {
+  const list = links?.items || [];
+  const unconfigured = list.some((l) => l.emailError === "email_not_configured");
+  const failure = list.find((l) => l.emailError && l.emailError !== "email_not_configured")?.emailError;
+  let reason = "Share it with the person it's for — nothing was emailed.";
+  if (unconfigured) reason = "Email isn't set up on this deployment, so nothing was emailed. Share each link with the person it's for.";
+  else if (failure) reason = `The invitation email couldn't be sent (${failure}). Share the link instead.`;
+
+  return (
+    <Dialog open={!!links} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{list.length === 1 ? "Invite link" : "Invite links"}</DialogTitle>
+          <DialogDescription>
+            {reason} Anyone who opens a link can accept it, so send each one only to its invitee.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          {list.map((l) => (
+            <div key={l.email} className="grid gap-1.5">
+              <p className="text-xs font-medium text-text-secondary">{l.email}</p>
+              <div className="flex items-center gap-2">
+                <Input
+                  readOnly
+                  value={l.inviteUrl}
+                  aria-label={`Invite link for ${l.email}`}
+                  onFocus={(e) => e.target.select()}
+                  className="h-9 font-mono text-xs"
+                />
+                <CopyLinkButton value={l.inviteUrl} />
+              </div>
+            </div>
+          ))}
+        </div>
+        <DialogFooter>
+          <Button className="bg-primary text-primary-foreground" onClick={onClose}>
+            Done
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export function TeamMembersScreen() {
   // The roster, everything derived from it, and every write live in useTeam;
@@ -65,6 +134,7 @@ export function TeamMembersScreen() {
     parseInviteList,
     inviteMembers,
     resendInvite,
+    inviteLinkFor,
     revokeInvite,
     addGroup,
     editGroup,
@@ -98,6 +168,11 @@ export function TeamMembersScreen() {
   const [groupOpen, setGroupOpen] = useState(false);
   const [openMemberId, setOpenMemberId] = useState(null);
   const [removeTarget, setRemoveTarget] = useState(null);
+  // { items: [{ email, inviteUrl, emailError? }] } while the invite-link dialog is open.
+  const [inviteLinks, setInviteLinks] = useState(null);
+  const showLinks = (items) => {
+    if (items?.length) setInviteLinks({ items });
+  };
 
   const filteredMembers = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -137,7 +212,7 @@ export function TeamMembersScreen() {
     const list = parseInviteList(emails);
     if (!list) return;
     setInviteOpen(false);
-    inviteMembers(list, roleId, groupId, message);
+    inviteMembers(list, roleId, groupId, message).then(showLinks);
   };
 
   const handleCreateGroup = (name, description) => {
@@ -303,7 +378,8 @@ export function TeamMembersScreen() {
           invites={invites}
           roles={roles}
           roleById={roleById}
-          onResend={resendInvite}
+          onResend={(m) => resendInvite(m).then((link) => showLinks(link ? [link] : []))}
+          onCopyLink={(m) => inviteLinkFor(m).then((link) => showLinks(link ? [link] : []))}
           onRevoke={revokeInvite}
           onInvite={openInvite}
         />
@@ -328,6 +404,8 @@ export function TeamMembersScreen() {
         groups={groups}
         onSubmit={handleInvite}
       />
+
+      <InviteLinksDialog links={inviteLinks} onClose={() => setInviteLinks(null)} />
 
       <GroupDialog
         key={groupOpen ? "group-open" : "group-closed"}

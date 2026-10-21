@@ -74,7 +74,7 @@ function conversationsHref(projectId, channelId) {
 
 export function ChannelScreen({ kind }) {
   const meta = CHANNEL_KIND_META[kind];
-  // A live kind starts connected (a disconnected Messenger stops its widget); simulated kinds start disconnected.
+  // A live kind starts connected (disconnecting stops its widget or its email replies); simulated kinds start disconnected.
   const initialStatus = isSimulatedKind(kind) ? "disconnected" : "connected";
   const router = useRouter();
   const { projectId } = useOptionalProject() ?? {};
@@ -342,9 +342,7 @@ export function ChannelScreen({ kind }) {
             Are you sure you want to delete{" "}
             <span className="font-medium text-foreground">{deleteTarget?.name}</span>
             ? Existing conversations keep their history.
-            {isSimulatedKind(kind)
-              ? null
-              : " Its installed widget stops loading on your site."}
+            {meta.deleteNote ? ` ${meta.deleteNote}` : null}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

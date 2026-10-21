@@ -87,8 +87,10 @@ export function ChannelConfigForm({ meta, config = {}, errors = [], onChange }) 
     return field.hint ?? (field.required ? "Required." : undefined);
   };
 
-  const switches = meta.fields.filter((f) => f.type === "switch");
-  const values = meta.fields.filter((f) => f.type !== "switch");
+  // A field with its own editor section (Email's sendReplies) is edited there, not here.
+  const fields = meta.fields.filter((f) => !f.section);
+  const switches = fields.filter((f) => f.type === "switch");
+  const values = fields.filter((f) => f.type !== "switch");
   // Anything wider than a single input gets its own full-width row.
   const isWide = (field) => ["textarea", "accounts"].includes(field.type);
 

@@ -3,7 +3,7 @@
 // Connect dialog (spec §1.1/§5): creates a channel of this kind; for simulated kinds the body opens with the settings-only disclosure.
 
 import { useState } from "react";
-import { FlaskConical, Loader2, MessageCircle } from "lucide-react";
+import { FlaskConical, Loader2 } from "lucide-react";
 import {
   Button,
   Dialog,
@@ -15,7 +15,7 @@ import {
   Input,
 } from "@geiger/ui";
 import { Field } from "@/components/internal/shared/screen_kit";
-import { CONNECT_DISCLOSURE, LIVE_NOTE } from "./constants";
+import { CONNECT_DISCLOSURE } from "./constants";
 
 export function ConnectDialog({
   open,
@@ -67,7 +67,7 @@ export function ConnectDialog({
           <DialogDescription>
             {simulated
               ? `Save the settings for a ${meta.label.toLowerCase()} channel.`
-              : `Create a ${meta.label} channel, then install it on your site.`}
+              : `Create a ${meta.label} channel.`}
           </DialogDescription>
         </DialogHeader>
         <form
@@ -92,8 +92,10 @@ export function ConnectDialog({
               role="note"
               className="flex items-start gap-2.5 rounded-lg border border-border bg-surface-card px-3 py-2.5 text-sm text-text-secondary"
             >
-              <MessageCircle className="pointer-events-none mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              <p>{LIVE_NOTE} Generate an install snippet from the channel&apos;s Install section.</p>
+              <meta.icon className="pointer-events-none mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              <p>
+                {meta.liveNote} {meta.connectNote}
+              </p>
             </div>
           )}
           <Field label="Name" htmlFor="connect-channel-name">

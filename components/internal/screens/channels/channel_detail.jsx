@@ -124,7 +124,9 @@ export function ChannelDetailScreen({
     statusToast(status, isSimulated(form));
   };
 
-  const ActiveSection = SECTIONS[active] || SECTIONS.overview;
+  // A kind-specific section (Email's Delivery, Messenger's Install) only renders for its kind, even from a hand-edited URL.
+  const shown = NAV_GROUPS.some((g) => g.items.some((i) => i.key === active && (!i.showIf || i.showIf(form))));
+  const ActiveSection = SECTIONS[shown ? active : "overview"] || SECTIONS.overview;
 
   let saveState = null;
   if (missing.length) {
