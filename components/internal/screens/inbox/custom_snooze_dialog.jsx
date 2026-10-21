@@ -1,16 +1,38 @@
 "use client";
 
 import { useState } from "react";
-import { Button, Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, Input } from "@geiger/ui";
+import { toast } from "sonner";
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Input,
+} from "@geiger/ui";
 import { Field } from "@/components/internal/shared/screen_kit";
 
-export function CustomSnoozeDialog({ conversation, onConfirm, onCancel }) {
+export function CustomSnoozeDialog({ open, onConfirm, onCancel }) {
   const [value, setValue] = useState("");
+
+  // A past time would reopen the conversation straight away, so only a future one is accepted.
+  function submit() {
+    const at = new Date(value);
+    if (!value || !(at.getTime() > Date.now())) {
+      toast.error("Pick a time in the future.");
+      return;
+    }
+    onConfirm(at.toISOString());
+  }
+
   return (
-    <Dialog open={Boolean(conversation)} onOpenChange={(open) => !open && onCancel()}>
+    <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Snooze until…</DialogTitle>
+          <DialogDescription>Snoozed conversations come back to the inbox at this time.</DialogDescription>
         </DialogHeader>
         <Field label="Pick a date and time" htmlFor="snooze-at">
           <Input
@@ -27,7 +49,7 @@ export function CustomSnoozeDialog({ conversation, onConfirm, onCancel }) {
           <Button
             type="button"
             disabled={!value}
-            onClick={() => value && onConfirm(new Date(value).toISOString())}
+            onClick={submit}
           >
             Snooze
           </Button>

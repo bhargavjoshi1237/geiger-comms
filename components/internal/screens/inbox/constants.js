@@ -10,6 +10,7 @@ import {
   PRIORITY_META,
   PRIORITY_WEIGHT,
 } from "../overview/constants";
+import { MACRO_ACTION_CATALOG, MACRO_SNOOZE_OPTIONS, MACRO_VARIABLES } from "../automation/constants";
 
 export { CONVERSATION_CHANNELS, CONVERSATION_STATUS_MAP, PRIORITY_META, PRIORITY_WEIGHT };
 
@@ -98,7 +99,7 @@ export function defaultFilter() {
   };
 }
 
-// Client mirror of comms.filter_conversations for realtime rows (spec §5.4); `extras` = { tagIds, mentionIds }, an unknown extra skips its check.
+// Client mirror of comms.filter_conversations for realtime rows (spec §5.4); an unknown extra skips its check, `searchMatched` keeps a server body-match.
 export function matchesFilter(conversation, filter, teammateId, extras = {}) {
   if (!conversation) return false;
   const f = { ...defaultFilter(), ...filter };
@@ -127,8 +128,10 @@ export function matchesFilter(conversation, filter, teammateId, extras = {}) {
   const q = (f.search || "").trim().toLowerCase();
   if (
     q &&
-    !(conversation.subject || "").toLowerCase().includes(q) &&
-    !(conversation.preview || "").toLowerCase().includes(q)
+    !extras.searchMatched &&
+    ![conversation.subject, conversation.preview, conversation.contactName, conversation.contactEmail].some((text) =>
+      (text || "").toLowerCase().includes(q),
+    )
   ) {
     return false;
   }
@@ -327,7 +330,62 @@ export function formatElapsed(value, nowMs) {
   return `${Math.floor(hours / 24)}d`;
 }
 
-// ---- keyboard shortcuts --------------------------------------------------------------
+// ---- macros (authored in Automation → Macros) -------------------------------------------
 
-// j/k move selection · Enter opens · e closes/reopens · a assigns · s snoozes ·
-// "/" focuses search · Esc clears selection. Skipped while typing (spec §5.5).
+// Fills each known {{token}} from `values` (token → text); a token with no value stays put for the teammate to fill in.
+export function fillMacroBody(body, values) {
+  let out = String(body || "");
+  for (const { token } of MACRO_VARIABLES) {
+    const value = values[token] == null ? "" : String(values[token]).trim();
+    if (value) out = out.split(token).join(value);
+  }
+  return out;
+}
+
+// Known {{tokens}} still in a draft; sending one would show the customer raw template text.
+export function unfilledMacroTokens(text) {
+  return MACRO_VARIABLES.map((v) => v.token).filter((token) => (text || "").includes(token));
+}
+
+// One macro action as a short label: "Assign to: Ann", "Add tag: billing", "Close".
+export function macroActionLabel(action, teammates = []) {
+  const label = MACRO_ACTION_CATALOG.find((c) => c.key === action?.action)?.label ?? action?.action ?? "Action";
+  let value = null;
+  switch (action?.action) {
+    case "assign":
+      value = teammates.find((t) => t.id === action.teammateId)?.name || action.teammateName || null;
+      break;
+    case "tag.add":
+    case "tag.remove":
+      value = action.tag || null;
+      break;
+    case "priority.set":
+      value = action.priority || null;
+      break;
+    case "state.snooze":
+      value = MACRO_SNOOZE_OPTIONS.find((o) => o.value === action.snooze)?.label ?? null;
+      break;
+    case "ticket.state":
+      value = TICKET_STATE_OPTIONS.find((o) => o.value === action.state)?.label ?? null;
+      break;
+    default:
+      break;
+  }
+  return value ? `${label}: ${value}` : label;
+}
+
+// ---- attachments -------------------------------------------------------------------------
+
+// Mirrors lib/widget/attachments (the server re-checks by magic bytes): images and PDFs, 10 MB each, five per message.
+export const ATTACHMENT_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"];
+export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+export const ATTACHMENT_MAX_COUNT = 5;
+
+export function formatBytes(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  const mb = n / (1024 * 1024);
+  return `${mb >= 10 ? Math.round(mb) : mb.toFixed(1)} MB`;
+}

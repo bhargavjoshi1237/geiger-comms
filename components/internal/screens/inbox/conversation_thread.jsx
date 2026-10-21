@@ -1,7 +1,6 @@
 "use client";
 
-// The centre pane: thread header (subject + conversation actions), the message stream and the composer.
-// Presentational — InboxShell owns the mutations. Priority and tags are edited in the details panel. Renders a placeholder when nothing is open (spec §5.2).
+// The presentational centre pane (spec §5.2): header actions, copilot summary, message stream and composer; InboxShell owns the mutations.
 
 import { useEffect, useMemo, useRef } from "react";
 import {
@@ -16,32 +15,38 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   LogoLoading,
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
 } from "@geiger/ui";
 import {
   AlarmClock,
   AlertTriangle,
   ArrowLeft,
+  ArrowRight,
   Check,
   CheckCheck,
   ChevronDown,
   CircleDot,
+  Loader2,
   Mail,
   MailOpen,
+  Merge,
   MessageSquareOff,
   MessagesSquare,
   MoreHorizontal,
   PanelRight,
   RotateCcw,
+  Sparkles,
   Ticket as TicketIcon,
   UserMinus,
   UserPlus,
 } from "lucide-react";
+
+import { Gated } from "@/components/internal/shared/gated";
 import { cn } from "@/lib/utils";
 import MessageBubble from "./message_bubble";
 import { Composer } from "./composer";
+import { SlaTimer } from "./sla_timer";
+import { SummaryPanel } from "./copilot";
+import { useThreadCopilot } from "./use_thread_copilot";
 import {
   SNOOZE_PRESETS,
   channelMeta,
@@ -56,21 +61,6 @@ import {
 
 // Consecutive messages from one author within this window share a header.
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
-
-// Wraps a disabled control so its permission reason still shows on hover/focus (disabled buttons get no pointer events).
-function Gated({ reason, children }) {
-  if (!reason) return children;
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span tabIndex={0} className="inline-flex rounded-md">
-          {children}
-        </span>
-      </TooltipTrigger>
-      <TooltipContent>{reason}</TooltipContent>
-    </Tooltip>
-  );
-}
 
 function CenteredNotice({ icon: Icon, title, description, action }) {
   return (
@@ -147,8 +137,16 @@ export function ConversationThread({
   onReopen,
   onToggleRead,
   onCreateTicket,
+  onMerge,
+  onOpenConversation,
+  macros,
+  onResolveMacro,
+  onRunMacro,
+  onUpload,
 }) {
   const scroller = useRef(null);
+  const composerRef = useRef(null);
+  const copilot = useThreadCopilot(conversation?.id ?? null, messages);
 
   // Keep the newest message in view — only when the message set grows, so scrolling up never fights the user.
   const lastMessageId = messages?.[messages.length - 1]?.id;
@@ -202,6 +200,7 @@ export function ConversationThread({
   const ChannelIcon = channelMeta(channel).icon;
   const assignee = teammates.find((t) => t.id === conversation.assigneeId) ?? null;
   const assigneeName = assignee?.name || conversation.assignee || "";
+  const summarizing = copilot.summary?.state === "loading";
 
   const assignTrigger = (
     <Button
@@ -261,6 +260,7 @@ export function ConversationThread({
                 Closed
               </span>
             ) : null}
+            <SlaTimer conversation={conversation} />
           </div>
           <p className="truncate text-xs text-muted-foreground">
             {contact} · {channel}
@@ -372,6 +372,20 @@ export function ConversationThread({
             </Button>
           ) : null}
 
+          {/* Summarize with AI — the panel opens under the header */}
+          <Gated reason={replyDisabledReason}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              disabled={Boolean(replyDisabledReason) || copilot.loading || summarizing}
+              aria-label="Summarize conversation"
+              title="Summarize conversation"
+              onClick={() => void copilot.summarize()}
+            >
+              {summarizing ? <Loader2 className="animate-spin" /> : <Sparkles />}
+            </Button>
+          </Gated>
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon-sm" aria-label="More conversation actions">
@@ -386,10 +400,47 @@ export function ConversationThread({
               <DropdownMenuItem className="text-xs" onClick={() => onCreateTicket?.(conversation)}>
                 <TicketIcon /> Create ticket from thread
               </DropdownMenuItem>
+              <DropdownMenuItem
+                className="text-xs"
+                disabled={Boolean(closeDisabledReason) || Boolean(conversation.mergedIntoId)}
+                title={closeDisabledReason || undefined}
+                onClick={() => onMerge?.(conversation)}
+              >
+                <Merge /> Merge into another conversation…
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
+
+      {conversation.mergedIntoId ? (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border bg-surface-subtle px-4 py-2 text-xs text-muted-foreground sm:px-5">
+          <Merge className="h-3.5 w-3.5 shrink-0" />
+          <span className="min-w-0 flex-1 truncate">This conversation was merged into another one and closed.</span>
+          <Button
+            variant="ghost"
+            size="xs"
+            className="shrink-0"
+            onClick={() => onOpenConversation?.(conversation.mergedIntoId)}
+          >
+            Open it <ArrowRight />
+          </Button>
+        </div>
+      ) : null}
+
+      {copilot.summary ? (
+        <SummaryPanel
+          summary={copilot.summary}
+          status={copilot.status}
+          canInsert={canReply}
+          onInsert={() => {
+            composerRef.current?.insertNote(copilot.summary.text, { model: copilot.summary.model });
+            copilot.dismissSummary();
+          }}
+          onRetry={() => void copilot.summarize()}
+          onDismiss={copilot.dismissSummary}
+        />
+      ) : null}
 
       {/* Messages (flex-1, overflow-y-auto) */}
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 pb-2 pt-6 sm:px-6">
@@ -414,7 +465,18 @@ export function ConversationThread({
                   {contact} started this conversation {channelMeta(channel).via} · {formatClock(item.at)}
                 </p>
               ) : (
-                <MessageBubble key={item.key} message={item.message} grouped={item.grouped} mentionNames={mentionNames} />
+                <MessageBubble
+                  key={item.key}
+                  message={item.message}
+                  grouped={item.grouped}
+                  mentionNames={mentionNames}
+                  translatable={canReply && !copilot.loading && copilot.translatable.has(item.message.id)}
+                  translation={copilot.translations[item.message.id]}
+                  aiStatus={copilot.translations[item.message.id]?.state === "unavailable" ? copilot.status : undefined}
+                  onTranslate={copilot.translate}
+                  onToggleOriginal={copilot.toggleOriginal}
+                  onDismissTranslation={copilot.dismissTranslation}
+                />
               ),
             )}
           </div>
@@ -424,13 +486,19 @@ export function ConversationThread({
       {/* Composer (shrink-0); keyed so a draft never leaks into another conversation */}
       <Composer
         key={conversation.id}
+        ref={composerRef}
+        conversationId={conversation.id}
         teammates={teammates}
         me={me}
         recipient={contact}
         channel={channel}
+        macros={macros}
         disabled={!canReply}
         disabledReason={replyDisabledReason}
         onSend={onSend}
+        onResolveMacro={onResolveMacro}
+        onRunMacro={onRunMacro}
+        onUpload={onUpload}
       />
     </div>
   );

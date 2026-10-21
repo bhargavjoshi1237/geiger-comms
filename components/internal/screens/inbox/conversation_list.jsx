@@ -1,7 +1,6 @@
 "use client";
 
-// The middle-left pane: title, search + filter menu + sort, status tabs, then the rows. Presentational — InboxShell owns rows, selection and filters (spec §4.2).
-// The header always renders so a filter change never unmounts the search box; only the rows area shows the loader.
+// The presentational list pane (spec §4.2); the header always renders so a filter change never unmounts the search box.
 
 import { useCallback } from "react";
 import {
@@ -44,6 +43,8 @@ import {
 import { EmptyState } from "@/components/internal/shared/screen_kit";
 import { cn } from "@/lib/utils";
 import ConversationRow from "./conversation_row";
+import { BulkBar } from "./bulk_bar";
+import { AvailabilityToggle } from "./availability_toggle";
 import { presetFilter } from "./use_inbox_shell";
 import {
   ASSIGNEE_FILTER_OPTIONS,
@@ -163,6 +164,10 @@ export function ConversationList({
   onClearFilters,
   onClearChannel,
   onNewConversation,
+  bulk,
+  me,
+  assignDisabledReason,
+  closeDisabledReason,
 }) {
   // Keyset pagination: ask for the next page shortly before the bottom so the scroll never visibly empties out.
   const handleScroll = useCallback(
@@ -222,19 +227,21 @@ export function ConversationList({
         <div className="flex h-8 items-center gap-2">
           <h1 className="truncate text-[15px] font-semibold tracking-tight text-foreground">{title}</h1>
           {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-label="Updating" /> : null}
-          {onNewConversation ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="ml-auto"
-              aria-label="New conversation"
-              title="New conversation"
-              onClick={onNewConversation}
-            >
-              <SquarePen />
-            </Button>
-          ) : null}
+          <div className="ml-auto flex items-center gap-1">
+            <AvailabilityToggle />
+            {onNewConversation ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="New conversation"
+                title="New conversation"
+                onClick={onNewConversation}
+              >
+                <SquarePen />
+              </Button>
+            ) : null}
+          </div>
         </div>
 
         <div className="mt-3 flex items-center gap-1.5">
@@ -245,8 +252,8 @@ export function ConversationList({
               expandedWidth="100%"
               value={filter.search || ""}
               onChange={(search) => set({ search })}
-              placeholder="Search"
-              label="Search conversations (press / to focus)"
+              placeholder="Search messages and people"
+              label="Search messages, subjects and people (press / to focus)"
               className="min-h-8 w-full"
               inputClassName="py-[5px] [&::-webkit-search-cancel-button]:appearance-none"
             />
@@ -460,6 +467,20 @@ export function ConversationList({
         </Tabs>
       </div>
 
+      {bulk && bulk.count > 0 ? (
+        <BulkBar
+          bulk={bulk}
+          loadedCount={conversations.length}
+          hasMore={hasMore}
+          statusTab={tabValue}
+          teammates={teammates}
+          me={me}
+          tags={tags}
+          assignDisabledReason={assignDisabledReason}
+          closeDisabledReason={closeDisabledReason}
+        />
+      ) : null}
+
       {/* Rows */}
       <div onScroll={handleScroll} className="min-h-0 flex-1 overflow-y-auto px-2 py-1.5">
         {initialLoading ? (
@@ -512,7 +533,11 @@ export function ConversationList({
                 active={conversation.id === activeId}
                 focused={conversation.id === focusedId}
                 showStatus={status.length !== 1}
+                selected={bulk?.selectedIds.has(conversation.id) ?? false}
+                selecting={(bulk?.count ?? 0) > 0}
+                searchQuery={filter.search}
                 onSelect={onSelect}
+                onToggleSelect={bulk?.toggle}
               />
             ))}
             {hasMore && !refreshing ? (

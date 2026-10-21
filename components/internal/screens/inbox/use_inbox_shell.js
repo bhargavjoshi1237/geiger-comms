@@ -11,40 +11,60 @@ import { useOptionalProject } from "@/context/project-context";
 import { useCan } from "@/context/rbac-context";
 import {
   assignConversation,
+  assignConversations,
   closeConversation,
   conversationCursor,
+  countConversations,
   createConversation,
   createMessage,
   findOrCreateContact,
   getConversation,
+  listConversationIds,
   listConversations,
   listThread,
   markRead,
   markUnread,
+  mergeConversation,
   normalizeConversation,
   normalizeMessage,
   reopenConversation,
   setPriority,
   snoozeConversation,
+  updateConversations,
+  uploadMessageAttachment,
 } from "@/lib/supabase/comms";
 import { getCurrentTeammate, listTeammates } from "@/lib/supabase/teammates";
 import {
   TAG_COLORS,
   addConversationTag,
+  addTagToConversations,
   createTag,
   listTags,
   listTagsForConversations,
   removeConversationTag,
 } from "@/lib/supabase/tags";
 import { listChannels } from "@/lib/supabase/channels";
-import { createTicket, linkTicket } from "@/lib/supabase/tickets";
+import { listMacros } from "@/lib/supabase/macros";
+import { getContact } from "@/lib/supabase/customers";
+import { createTicket, getConversationTicket, linkTicket, updateTicket } from "@/lib/supabase/tickets";
 import { createMentions, listMentions, markMentionsRead } from "@/lib/supabase/mentions";
 import { subscribeTable } from "@/lib/supabase/realtime";
-import { defaultFilter, matchesFilter, snoozeUntil } from "./constants";
+import {
+  contactLabel,
+  defaultFilter,
+  fillMacroBody,
+  isKnownContact,
+  macroActionLabel,
+  matchesFilter,
+  snoozeUntil,
+} from "./constants";
 
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 250;
 const OWN_ECHO_MS = 15000;
+const NO_SELECTION = { key: "", ids: [], anchorId: null, all: false, total: null };
+
+const plural = (n) => `${n} conversation${n === 1 ? "" : "s"}`;
 
 export const ASSIGN_DENIED =
   "You don't have permission to assign conversations (comms.conversation.assign).";
@@ -156,6 +176,11 @@ export function useInboxShell({ preset = "all", startFilter }) {
   const [ticketDraft, setTicketDraft] = useState(null); // conversation being ticketed
   const [menu, setMenu] = useState(null); // { kind: "assign" | "snooze", id } opened from the keyboard
   const [contactOpen, setContactOpen] = useState(false); // below-lg contact sheet
+  const [mergeSource, setMergeSource] = useState(null); // conversation being merged into another
+  const [bulkSnoozeOpen, setBulkSnoozeOpen] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  // Bulk selection, keyed by the list query so a filter change drops it; `all` = every match, not just loaded rows.
+  const [selection, setSelection] = useState(NO_SELECTION);
 
   // ---- filter -------------------------------------------------------------------
   // startFilter arrives pre-resolved and the caller keys this component by view id, so reading it once is safe.
@@ -186,6 +211,7 @@ export function useInboxShell({ preset = "all", startFilter }) {
   const [allTags, setAllTags] = useState([]);
   const [tagMap, setTagMap] = useState({});
   const [channels, setChannels] = useState([]);
+  const [macros, setMacros] = useState([]);
   const [mentionIds, setMentionIds] = useState(null); // Set of mentioned conversation ids (Mentions preset)
 
   useEffect(() => {
@@ -205,11 +231,14 @@ export function useInboxShell({ preset = "all", startFilter }) {
 
   useEffect(() => {
     let alive = true;
-    Promise.all([listTags({ projectId }), listChannels({ projectId })]).then(([tags, chans]) => {
-      if (!alive) return;
-      setAllTags(tags || []);
-      setChannels(chans || []);
-    });
+    Promise.all([listTags({ projectId }), listChannels({ projectId }), listMacros({ projectId })]).then(
+      ([tags, chans, macroRows]) => {
+        if (!alive) return;
+        setAllTags(tags || []);
+        setChannels(chans || []);
+        setMacros(macroRows || []);
+      },
+    );
     return () => {
       alive = false;
     };
@@ -372,6 +401,18 @@ export function useInboxShell({ preset = "all", startFilter }) {
     setPinned((prev) => (prev.row?.id === id ? { ...prev, row: { ...prev.row, ...patch } } : prev));
   }, []);
 
+  // Bulk twin of patchRow; `patchFor(row)` returns each row's patch.
+  const patchRows = useCallback((ids, patchFor) => {
+    const wanted = new Set(ids);
+    setPage((prev) => ({
+      ...prev,
+      rows: prev.rows.map((r) => (wanted.has(r.id) ? { ...r, ...patchFor(r) } : r)),
+    }));
+    setPinned((prev) =>
+      prev.row && wanted.has(prev.row.id) ? { ...prev, row: { ...prev.row, ...patchFor(prev.row) } } : prev,
+    );
+  }, []);
+
   const findRow = useCallback(
     (id) =>
       rowsRef.current.find((r) => r.id === id) ??
@@ -479,7 +520,7 @@ export function useInboxShell({ preset = "all", startFilter }) {
           if (!current) return prev;
           const merged = mergeFields(current, patch);
           // A row leaving the filter drops out — except the open one, which stays put while it's read.
-          if (!isOpen && !matchesFilter(merged, filterRef.current, mine?.id, extrasFor(id))) {
+          if (!isOpen && !matchesFilter(merged, filterRef.current, mine?.id, { ...extrasFor(id), searchMatched: true })) {
             return { ...prev, rows: prev.rows.filter((r) => r.id !== id) };
           }
           return { ...prev, rows: prev.rows.map((r) => (r.id === id ? merged : r)) };
@@ -575,6 +616,16 @@ export function useInboxShell({ preset = "all", startFilter }) {
 
   const isFiltered = isNarrowed(effectiveFilter, preset);
 
+  const selectionLive = selection.key !== "" && selection.key === listKey;
+  const selectAllMatching = selectionLive && selection.all;
+  const selectedIds = useMemo(
+    () => new Set(selectAllMatching ? visibleRows.map((r) => r.id) : selectionLive ? selection.ids : []),
+    [selectAllMatching, selectionLive, selection.ids, visibleRows],
+  );
+  // Ids of rows that left the list (realtime) drop out, so a bulk action only touches what's on screen.
+  const selectedRows = useMemo(() => visibleRows.filter((r) => selectedIds.has(r.id)), [visibleRows, selectedIds]);
+  const selectedCount = selectAllMatching ? Math.max(selection.total ?? 0, selectedRows.length) : selectedRows.length;
+
   // The list edits the effective filter; never persist the URL's channel into local state (the URL owns it).
   const updateFilter = useCallback(
     (next) => {
@@ -601,6 +652,7 @@ export function useInboxShell({ preset = "all", startFilter }) {
   }, [channelParam, closeChannel]);
 
   // ---- mutations (optimistic -> persist -> revert only the patched keys + toast) -------------
+  // Without a failMessage the caller reports the failure (macro actions batch theirs into one toast).
   const mutateRow = useCallback(
     async (id, patch, persist, failMessage) => {
       const previous = findRow(id);
@@ -608,7 +660,7 @@ export function useInboxShell({ preset = "all", startFilter }) {
       const saved = await persist();
       if (!saved) {
         if (previous) patchRow(id, pick(previous, Object.keys(patch)));
-        toast.error(failMessage);
+        if (failMessage) toast.error(failMessage);
         return null;
       }
       return saved;
@@ -696,20 +748,27 @@ export function useInboxShell({ preset = "all", startFilter }) {
     setTagMap((prev) => ({ ...prev, [id]: update(prev[id] ?? []) }));
   }, []);
 
-  const handleToggleTag = useCallback(
-    async (conversation, tag) => {
-      const id = conversation.id;
+  // Optimistically flips one tag link and persists it; false (already reverted) when the write fails.
+  const toggleTagLink = useCallback(
+    async (id, tag) => {
       const applied = (tagMapRef.current[id] ?? []).some((t) => t.id === tag.id);
       setRowTags(id, (list) => (applied ? list.filter((t) => t.id !== tag.id) : [...list, tag]));
       const ok = applied
         ? await removeConversationTag(id, tag.id)
         : await addConversationTag(id, tag.id);
-      if (!ok) {
-        setRowTags(id, (list) => (applied ? [...list, tag] : list.filter((t) => t.id !== tag.id)));
-        toast.error(applied ? "Couldn't remove the tag." : "Couldn't add the tag.");
-      }
+      if (!ok) setRowTags(id, (list) => (applied ? [...list, tag] : list.filter((t) => t.id !== tag.id)));
+      return ok;
     },
     [setRowTags],
+  );
+
+  const handleToggleTag = useCallback(
+    async (conversation, tag) => {
+      const applied = (tagMapRef.current[conversation.id] ?? []).some((t) => t.id === tag.id);
+      const ok = await toggleTagLink(conversation.id, tag);
+      if (!ok) toast.error(applied ? "Couldn't remove the tag." : "Couldn't add the tag.");
+    },
+    [toggleTagLink],
   );
 
   const handleCreateTag = useCallback(
@@ -755,9 +814,142 @@ export function useInboxShell({ preset = "all", startFilter }) {
     [allTags, projectId, me?.userId, setRowTags, handleToggleTag],
   );
 
+  // ---- macros (authored in Automation → Macros; personal ones only for their owner) -------------
+  const userId = me?.userId ?? null;
+  const visibleMacros = useMemo(
+    () =>
+      macros
+        .filter((m) => m.scope === "team" || (Boolean(userId) && m.createdBy === userId))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [macros, userId],
+  );
+
+  // The macro body with its {{tokens}} filled from the open conversation; contact and ticket are read only when the body needs them.
+  const resolveMacroBody = useCallback(
+    async (macro) => {
+      const body = macro?.body || "";
+      const conversation = activeRow;
+      if (!conversation) return body;
+      const needsContact = body.includes("{{contact.company}}") || body.includes("{{contact.plan}}");
+      const [contact, ticket] = await Promise.all([
+        needsContact && conversation.contactId ? getContact(conversation.contactId) : null,
+        body.includes("{{ticket.title}}") ? getConversationTicket(conversation.id) : null,
+      ]);
+      return fillMacroBody(body, {
+        "{{contact.name}}": isKnownContact(conversation) ? conversation.contactName : "",
+        "{{contact.email}}": conversation.contactEmail,
+        "{{contact.company}}": contact?.company,
+        "{{contact.plan}}": contact?.custom?.plan ?? contact?.metadata?.plan,
+        "{{teammate.name}}": me?.name,
+        "{{conversation.subject}}": conversation.subject,
+        "{{ticket.title}}": ticket?.title,
+      });
+    },
+    [activeRow, me?.name],
+  );
+
+  // One macro action against `conversation`: "ok" | "failed" | "denied" (no permission) | "missing" (its teammate/tag/ticket is gone).
+  const runMacroAction = useCallback(
+    async (conversation, action) => {
+      const id = conversation.id;
+      switch (action?.action) {
+        case "assign": {
+          if (!canAssign) return "denied";
+          const mate = teammates.find((t) => t.id === action.teammateId);
+          if (!mate) return "missing";
+          const saved = await mutateRow(id, { assigneeId: mate.id, assignee: mate.name }, () => assignConversation(id, mate));
+          return saved ? "ok" : "failed";
+        }
+        case "tag.add":
+        case "tag.remove": {
+          const name = String(action.tag || "").toLowerCase();
+          const tag = allTags.find((t) => t.name.toLowerCase() === name);
+          if (!tag) return "missing";
+          const applied = (tagMapRef.current[id] ?? []).some((t) => t.id === tag.id);
+          if (applied === (action.action === "tag.add")) return "ok";
+          return (await toggleTagLink(id, tag)) ? "ok" : "failed";
+        }
+        case "priority.set": {
+          if (!action.priority) return "missing";
+          const saved = await mutateRow(id, { priority: action.priority }, () => setPriority(id, action.priority));
+          return saved ? "ok" : "failed";
+        }
+        case "state.snooze": {
+          if (!canClose) return "denied";
+          const until = snoozeUntil(action.snooze);
+          if (!until) return "missing";
+          const saved = await mutateRow(id, { status: "Snoozed", snoozedUntil: until }, () => snoozeConversation(id, until));
+          return saved ? "ok" : "failed";
+        }
+        case "state.close": {
+          if (!canClose) return "denied";
+          const saved = await mutateRow(
+            id,
+            { status: "Closed", closedAt: new Date().toISOString() },
+            () => closeConversation(id),
+          );
+          return saved ? "ok" : "failed";
+        }
+        case "state.reopen": {
+          if (!canClose) return "denied";
+          const saved = await mutateRow(
+            id,
+            { status: "Open", closedAt: null, snoozedUntil: null },
+            () => reopenConversation(id),
+          );
+          return saved ? "ok" : "failed";
+        }
+        case "ticket.state": {
+          const ticket = await getConversationTicket(id);
+          if (!ticket || !action.state) return "missing";
+          return (await updateTicket(ticket.id, { state: action.state })) ? "ok" : "failed";
+        }
+        default:
+          return "missing";
+      }
+    },
+    [canAssign, canClose, teammates, allTags, mutateRow, toggleTagLink],
+  );
+
+  // Runs a macro's actions in order, then reports once: what applied, or what failed and what was skipped.
+  const applyMacroActions = useCallback(
+    async (conversation, macro) => {
+      const actions = Array.isArray(macro?.actions) ? macro.actions : [];
+      if (!conversation || actions.length === 0) return;
+      const reasons = { failed: "failed", denied: "no permission", missing: "no longer available" };
+      const problems = [];
+      for (const action of actions) {
+        const result = await runMacroAction(conversation, action);
+        if (result !== "ok") problems.push(`${macroActionLabel(action, teammates)} (${reasons[result]})`);
+      }
+      if (problems.length) toast.error(`“${macro.name}” — not applied: ${problems.join(", ")}`);
+      else toast.success(`“${macro.name}” applied`);
+    },
+    [runMacroAction, teammates],
+  );
+
+  // A macro with no reply text runs its actions as soon as it's picked.
+  const handleRunMacro = useCallback(
+    (macro) => {
+      if (activeRow) void applyMacroActions(activeRow, macro);
+    },
+    [activeRow, applyMacroActions],
+  );
+
+  const handleUpload = useCallback(
+    async (file) => {
+      if (!conversationId) return null;
+      const attachment = await uploadMessageAttachment(file, conversationId);
+      if (!attachment) toast.error(`Couldn't upload ${file.name}.`);
+      return attachment;
+    },
+    [conversationId],
+  );
+
   // ---- reply / note; returns false so the composer keeps the draft on failure -------------------
+  // `macro` ({ name, actions }) is the picked macros' pending actions, applied once the message is saved.
   const handleSend = useCallback(
-    async ({ body, messageType }) => {
+    async ({ body, messageType, attachments = [], macro = null }) => {
       if (!activeRow) return false;
       const conversation = activeRow;
       const isNote = messageType === "note";
@@ -771,7 +963,8 @@ export function useInboxShell({ preset = "all", startFilter }) {
         authorId: me?.id ?? null,
         messageType,
         body,
-        attachments: [],
+        attachments,
+        delivery: null,
         createdAt: new Date().toISOString(),
       };
       setThread((prev) =>
@@ -793,6 +986,7 @@ export function useInboxShell({ preset = "all", startFilter }) {
         authorRole: "agent",
         authorName,
         authorId: me?.id ?? null,
+        attachments,
       });
       if (!saved) {
         setThread((prev) =>
@@ -824,9 +1018,10 @@ export function useInboxShell({ preset = "all", startFilter }) {
           if (!ok) toast.error("Note saved, but the @mentions weren't delivered.");
         }
       }
+      if (macro) void applyMacroActions(conversation, macro);
       return true;
     },
-    [activeRow, me, teammates, patchRow],
+    [activeRow, me, teammates, patchRow, applyMacroActions],
   );
 
   const handleCreateConversation = useCallback(
@@ -929,6 +1124,228 @@ export function useInboxShell({ preset = "all", startFilter }) {
     [projectId],
   );
 
+  // Closes the duplicate and links it to `target` (Intercom merge), then opens the conversation it was merged into.
+  const handleMerge = useCallback(
+    async (source, target) => {
+      if (!canClose || !source || !target) return false;
+      const saved = await mutateRow(
+        source.id,
+        { status: "Closed", closedAt: new Date().toISOString(), snoozedUntil: null, mergedIntoId: target.id },
+        () => mergeConversation(source.id, target.id),
+        "Couldn't merge the conversations.",
+      );
+      if (!saved) return false;
+      toast.success(`Merged into “${target.subject || contactLabel(target)}”`);
+      selectConversation(target.id);
+      return true;
+    },
+    [canClose, mutateRow, selectConversation],
+  );
+
+  // ---- bulk selection + actions ------------------------------------------------------------------
+  const clearSelection = useCallback(() => setSelection(NO_SELECTION), []);
+
+  // Toggles one row; `range` (shift-click) selects every row between the last toggled row and this one.
+  const toggleSelect = useCallback(
+    (id, range = false) => {
+      const order = page.rows.map((r) => r.id);
+      setSelection((prev) => {
+        const live = prev.key === listKey;
+        const set = new Set(live ? (prev.all ? order : prev.ids) : []);
+        const from = live && range && prev.anchorId ? order.indexOf(prev.anchorId) : -1;
+        const to = order.indexOf(id);
+        if (from >= 0 && to >= 0) {
+          for (const rowId of order.slice(Math.min(from, to), Math.max(from, to) + 1)) set.add(rowId);
+        } else if (set.has(id)) {
+          set.delete(id);
+        } else {
+          set.add(id);
+        }
+        return { key: listKey, ids: [...set], anchorId: id, all: false, total: live ? prev.total : null };
+      });
+    },
+    [page.rows, listKey],
+  );
+
+  // Selects every loaded row (or clears when they all are); with more pages, counts the full match for "select all".
+  const toggleSelectLoaded = useCallback(() => {
+    const ids = page.rows.map((r) => r.id);
+    if (ids.length === 0) return;
+    if (selectAllMatching || ids.every((id) => selectedIds.has(id))) {
+      setSelection(NO_SELECTION);
+      return;
+    }
+    const key = listKey;
+    setSelection({ key, ids, anchorId: null, all: false, total: null });
+    if (!page.hasMore) return;
+    countConversations({ ...queryFilter, teammateId: me?.id ?? null }, { projectId }).then((total) => {
+      if (total != null) setSelection((prev) => (prev.key === key ? { ...prev, total } : prev));
+    });
+  }, [page.rows, page.hasMore, selectAllMatching, selectedIds, listKey, queryFilter, me?.id, projectId]);
+
+  const selectEveryMatch = useCallback(() => {
+    setSelection((prev) => (prev.key === listKey ? { ...prev, all: true } : prev));
+  }, [listKey]);
+
+  // The ids a bulk action covers: the selected rows, or every match re-read from the server.
+  const bulkTargets = useCallback(async () => {
+    if (!selectAllMatching) return selectedRows.map((r) => r.id);
+    return listConversationIds({ projectId, filter: { ...queryFilter, teammateId: me?.id ?? null } });
+  }, [selectAllMatching, selectedRows, projectId, queryFilter, me?.id]);
+
+  // apply(ids) optimistically, persist(ids) -> ids written, revert(ids) the misses; a partial failure keeps the misses selected.
+  const runBulk = useCallback(
+    async ({ apply, revert, persist, done, failMessage }) => {
+      if (bulkBusy) return;
+      setBulkBusy(true);
+      const ids = await bulkTargets();
+      if (!ids || ids.length === 0) {
+        setBulkBusy(false);
+        if (!ids) toast.error("Couldn't load the selected conversations.");
+        return;
+      }
+      apply(ids);
+      const written = new Set((await persist(ids)) ?? []);
+      setBulkBusy(false);
+      const missed = ids.filter((id) => !written.has(id));
+      if (missed.length) revert(missed);
+      if (missed.length === ids.length) {
+        toast.error(failMessage);
+        return;
+      }
+      if (missed.length) {
+        toast.error(`${done(written.size)}; ${plural(missed.length)} couldn't be updated.`);
+        setSelection({ key: listKey, ids: missed, anchorId: null, all: false, total: null });
+        return;
+      }
+      toast.success(done(written.size));
+      setSelection(NO_SELECTION);
+    },
+    [bulkBusy, bulkTargets, listKey],
+  );
+
+  // A row patch as runBulk callbacks: the same patch on every loaded target, reverted key by key from a snapshot.
+  const bulkPatch = useCallback(
+    (patch, persist, done, failMessage) => {
+      const snapshot = new Map();
+      return runBulk({
+        apply: (ids) => {
+          for (const id of ids) {
+            const row = findRow(id);
+            if (row) snapshot.set(id, pick(row, Object.keys(patch)));
+          }
+          patchRows(ids, () => patch);
+        },
+        revert: (ids) => patchRows(ids, (row) => snapshot.get(row.id) ?? {}),
+        persist,
+        done,
+        failMessage,
+      });
+    },
+    [runBulk, findRow, patchRows],
+  );
+
+  const handleBulkAssign = useCallback(
+    (teammate) => {
+      if (!canAssign) return;
+      void bulkPatch(
+        { assigneeId: teammate?.id ?? null, assignee: teammate?.name ?? "" },
+        (ids) => assignConversations(ids, teammate ?? null),
+        (n) => (teammate ? `Assigned ${plural(n)} to ${teammate.name}` : `Unassigned ${plural(n)}`),
+        "Couldn't update the assignee.",
+      );
+    },
+    [canAssign, bulkPatch],
+  );
+
+  const handleBulkClose = useCallback(() => {
+    if (!canClose) return;
+    const patch = { status: "Closed", closedAt: new Date().toISOString() };
+    void bulkPatch(patch, (ids) => updateConversations(ids, patch), (n) => `Closed ${plural(n)}`, "Couldn't close the conversations.");
+  }, [canClose, bulkPatch]);
+
+  const handleBulkReopen = useCallback(() => {
+    if (!canClose) return;
+    const patch = { status: "Open", closedAt: null, snoozedUntil: null };
+    void bulkPatch(patch, (ids) => updateConversations(ids, patch), (n) => `Reopened ${plural(n)}`, "Couldn't reopen the conversations.");
+  }, [canClose, bulkPatch]);
+
+  const handleBulkSnooze = useCallback(
+    (presetOrISO) => {
+      if (!canClose) return;
+      if (presetOrISO === "custom") {
+        setBulkSnoozeOpen(true);
+        return;
+      }
+      const until = presetOrISO.includes("T") ? presetOrISO : snoozeUntil(presetOrISO);
+      if (!until) return;
+      const patch = { status: "Snoozed", snoozedUntil: until };
+      void bulkPatch(patch, (ids) => updateConversations(ids, patch), (n) => `Snoozed ${plural(n)}`, "Couldn't snooze the conversations.");
+    },
+    [canClose, bulkPatch],
+  );
+
+  const handleBulkPriority = useCallback(
+    (priority) => {
+      void bulkPatch(
+        { priority },
+        (ids) => updateConversations(ids, { priority }),
+        (n) => `Set ${plural(n)} to ${priority}`,
+        "Couldn't update priority.",
+      );
+    },
+    [bulkPatch],
+  );
+
+  // Adds one tag to every target; rows that already carry it are left as they are.
+  const handleBulkTag = useCallback(
+    (tag) => {
+      const added = new Set();
+      void runBulk({
+        apply: (ids) => {
+          for (const id of ids) {
+            if ((tagMapRef.current[id] ?? []).some((t) => t.id === tag.id)) continue;
+            added.add(id);
+            setRowTags(id, (list) => [...list, tag]);
+          }
+        },
+        revert: (ids) => {
+          for (const id of ids) if (added.has(id)) setRowTags(id, (list) => list.filter((t) => t.id !== tag.id));
+        },
+        persist: (ids) => addTagToConversations(ids, tag.id),
+        done: (n) => `Tagged ${plural(n)} “${tag.name}”`,
+        failMessage: "Couldn't add the tag.",
+      });
+    },
+    [runBulk, setRowTags],
+  );
+
+  const handleBulkCreateTag = useCallback(
+    async (rawName) => {
+      const name = (rawName || "").trim();
+      if (!name) return;
+      const existing = allTags.find((t) => t.name.toLowerCase() === name.toLowerCase());
+      if (existing) {
+        handleBulkTag(existing);
+        return;
+      }
+      const created = await createTag({
+        id: crypto.randomUUID(),
+        name,
+        color: TAG_COLORS[allTags.length % TAG_COLORS.length],
+        projectId: projectId ?? null,
+        createdBy: me?.userId ?? null,
+      });
+      if (!created) {
+        toast.error("Couldn't create the tag.");
+        return;
+      }
+      setAllTags((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+      handleBulkTag(created);
+    },
+    [allTags, projectId, me?.userId, handleBulkTag],
+  );
+
   // Opens the assign / snooze menu for a row, opening the row first when the keyboard cursor is elsewhere.
   const openMenuFor = useCallback(
     (kind, row) => {
@@ -938,7 +1355,7 @@ export function useInboxShell({ preset = "all", startFilter }) {
     [conversationId, selectConversation],
   );
 
-  // ---- keyboard shortcuts (spec §5.5); skipped while typing or inside a menu/dialog --------------
+  // ---- keyboard shortcuts (spec §5.5): j/k · Enter · x · e · a · s · / · Esc; skipped while typing or inside a menu/dialog ----
   useEffect(() => {
     function onKeyDown(event) {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -995,12 +1412,18 @@ export function useInboxShell({ preset = "all", startFilter }) {
           if (!canClose) toast.error(CLOSE_DENIED);
           else openMenuFor("snooze", current);
           break;
+        case "x":
+          if (!current || idx < 0) break;
+          event.preventDefault();
+          toggleSelect(current.id);
+          break;
         case "/":
           event.preventDefault();
           document.querySelector('[data-inbox-search="true"] input')?.focus();
           break;
         case "Escape":
-          if (focusedId) setFocusedId(null);
+          if (selectedCount > 0) clearSelection();
+          else if (focusedId) setFocusedId(null);
           else if (conversationId) closeThread();
           break;
         default:
@@ -1021,6 +1444,9 @@ export function useInboxShell({ preset = "all", startFilter }) {
     handleReopen,
     handleClose,
     openMenuFor,
+    toggleSelect,
+    selectedCount,
+    clearSelection,
   ]);
 
   return {
@@ -1073,6 +1499,34 @@ export function useInboxShell({ preset = "all", startFilter }) {
     handleSend,
     handleCreateConversation,
     handleCreateTicket,
+    macros: visibleMacros,
+    resolveMacroBody,
+    handleRunMacro,
+    handleUpload,
+    mergeSource,
+    setMergeSource,
+    handleMerge,
+    bulk: {
+      selectedIds,
+      count: selectedCount,
+      loadedCount: selectedRows.length,
+      all: selectAllMatching,
+      total: selectionLive ? selection.total : null,
+      busy: bulkBusy,
+      toggle: toggleSelect,
+      toggleLoaded: toggleSelectLoaded,
+      selectAll: selectEveryMatch,
+      clear: clearSelection,
+      assign: handleBulkAssign,
+      close: handleBulkClose,
+      reopen: handleBulkReopen,
+      snooze: handleBulkSnooze,
+      priority: handleBulkPriority,
+      tag: handleBulkTag,
+      createTag: handleBulkCreateTag,
+    },
+    bulkSnoozeOpen,
+    setBulkSnoozeOpen,
     signedOut,
   };
 }
