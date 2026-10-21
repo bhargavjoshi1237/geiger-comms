@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "node --test \"lib/**/*.test.js\"",
     "db:push": "geiger-orm push",
     "db:status": "geiger-orm status",
     "db:rollback": "geiger-orm rollback",
@@ -15,6 +16,10 @@
     "db:seed:inbox": "node scripts/seed-inbox.js"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "4.0.82",
+    "@ai-sdk/google": "4.0.99",
+    "@ai-sdk/openai": "4.0.96",
+    "@ai-sdk/openai-compatible": "3.0.71",
     "@anthropic-ai/sdk": "^0.124.0",
     "@geiger/orm": "github:bhargavjoshi1237/geiger-orm#master",
     "@geiger/rbac": "github:bhargavjoshi1237/geiger-rbac#1835de3735cf9c86df5adebdbc7458dd4302e40d",
@@ -25,6 +30,7 @@
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.106.2",
     "@xyflow/react": "^12.12.0",
+    "ai": "7.0.143",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
@@ -41,7 +47,8 @@
     "react-dom": "19.2.4",
     "recharts": "^2.15.4",
     "sonner": "^2.0.7",
-    "tailwind-merge": "^3.6.0"
+    "tailwind-merge": "^3.6.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

@@ -9,10 +9,10 @@ import {
 } from "lucide-react";
 
 import { WORKSPACE_PERMISSIONS } from "@/lib/rbac";
+import { AI_FEATURES } from "@/lib/ai/features";
+import { PROVIDER_KINDS, PROVIDER_PRESETS } from "@/lib/ai/provider_kinds";
 
-// Lookups & formatters for the Settings area (Team & Members, Roles &
-// Permissions). Config only — no row data. Status/type maps feed StatusPill;
-// filter options seed the toolbar; formatters are imported, never re-inlined.
+// Lookups & formatters for the Settings area (team, roles, AI providers); config only, no row data.
 
 // --- Member status ---------------------------------------------------------
 
@@ -29,9 +29,7 @@ export const MEMBER_STATUS_FILTER_OPTIONS = [
   { value: "suspended", label: "Suspended" },
 ];
 
-// Roles and groups are identified by name and by their System/Custom badge —
-// there is no accent palette. The `color` column still exists on both tables and
-// the data layer still normalizes it; nothing reads it.
+// Roles and groups have no accent palette; their `color` column is still normalized but nothing reads it.
 
 // --- Domain status ---------------------------------------------------------
 
@@ -103,6 +101,49 @@ export const PERMISSION_GROUP_FILTER_OPTIONS = [
 // Default seat allowance until Billing wires a real plan limit (read from
 // project metadata `seatLimit` when present).
 export const DEFAULT_SEAT_LIMIT = 25;
+
+// --- AI Providers ----------------------------------------------------------
+
+export const PROVIDER_STATUS_MAP = {
+  unverified: { label: "Unverified", variant: "neutral", dotClass: "bg-text-tertiary" },
+  ok: { label: "Connected", variant: "success", dotClass: "bg-emerald-400" },
+  error: { label: "Error", variant: "danger", dotClass: "bg-red-400" },
+};
+
+// What the connect dialog offers: every kind, then the presets that prefill an OpenAI-compatible connection.
+// `local` presets (Ollama, vLLM, LM Studio) are shown only when the deployment allows local providers.
+export const PROVIDER_TEMPLATES = [
+  ...Object.entries(PROVIDER_KINDS).map(([value, kind]) => ({
+    value,
+    kind: value,
+    preset: null,
+    label: kind.label,
+    capabilities: kind.capabilities === "user" ? ["chat"] : kind.capabilities,
+    baseUrl: kind.baseUrl,
+    models: (kind.suggestedModels.chat || []).map((m) => m.id),
+    local: false,
+  })),
+  ...PROVIDER_PRESETS.map((preset) => ({
+    value: `preset:${preset.id}`,
+    kind: preset.kind,
+    preset: preset.id,
+    label: preset.label,
+    capabilities: preset.capabilities,
+    baseUrl: preset.baseUrl,
+    models: (preset.suggestedModels?.chat || []).map((m) => m.id),
+    local: Boolean(preset.local),
+  })),
+];
+
+// ai_usage_events.feature -> label, for the Usage card's by-feature list.
+export const USAGE_FEATURE_LABELS = {
+  ...Object.fromEntries(Object.values(AI_FEATURES).map((f) => [f.usage, f.label])),
+  test: "Connection tests",
+  models: "Model listings",
+  detect_dims: "Dimension detection",
+  embed_index: "Knowledge indexing",
+  embed_query: "Knowledge search",
+};
 
 // --- Formatters ------------------------------------------------------------
 
