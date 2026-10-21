@@ -5,6 +5,8 @@ import { CommsOverviewScreen } from "./overview/comms_overview";
 import { NavigationSettingsScreen } from "./settings/navigation_settings";
 import { TeamMembersScreen } from "./settings/team_members";
 import { RolesPermissionsScreen } from "./settings/roles_permissions";
+import { BusinessHoursScreen } from "./settings/business_hours";
+import { AiProvidersScreen } from "./settings/ai_providers";
 import { EmailScreen } from "./channels/email";
 import { MessengerScreen } from "./channels/messenger";
 import { SlackScreen } from "./channels/slack";
@@ -25,6 +27,11 @@ import { RunHistoryScreen } from "./automation/run_history";
 import { MacrosScreen } from "./automation/macros";
 import { RoutingRulesScreen } from "./automation/routing_rules";
 import { SLAPoliciesScreen } from "./automation/sla_policies";
+import { AnalyticsScreen } from "./reports/analytics";
+import { QualityCsatScreen } from "./reports/quality_csat";
+import { ArticlesScreen } from "./knowledge_base/articles";
+import { HelpCentersScreen } from "./knowledge_base/help_centers";
+import { KnowledgeGapsScreen } from "./knowledge_base/knowledge_gaps";
 import { workspaceNav } from "@/components/internal/sidebar/sidebar_nav";
 
 // Resolves the nav item (top-level or sub) for a title, for ComingSoon labels.
@@ -56,15 +63,22 @@ const REGISTERED = new Set([
   "Macros",
   "Routing Rules",
   "SLA Policies",
+  "Analytics",
+  "Quality & CSAT",
   "Navigation",
   "Teammates",
   "Roles & Permissions",
+  "Business Hours",
+  "AI Providers",
   "Email",
   "Messenger",
   "WhatsApp",
   "SMS",
   "Social",
   "Slack",
+  "Articles",
+  "Help Centers",
+  "Knowledge Gaps",
 ]);
 
 // Screens that need the whole viewport height and their own internal scrolling
@@ -108,12 +122,20 @@ export function ActiveScreen({ tab }) {
       return <RoutingRulesScreen />;
     case "SLA Policies":
       return <SLAPoliciesScreen />;
+    case "Analytics":
+      return <AnalyticsScreen />;
+    case "Quality & CSAT":
+      return <QualityCsatScreen />;
     case "Navigation":
       return <NavigationSettingsScreen />;
     case "Teammates":
       return <TeamMembersScreen />;
     case "Roles & Permissions":
       return <RolesPermissionsScreen />;
+    case "Business Hours":
+      return <BusinessHoursScreen />;
+    case "AI Providers":
+      return <AiProvidersScreen />;
     case "Email":
       return <EmailScreen />;
     case "Messenger":
@@ -126,6 +148,12 @@ export function ActiveScreen({ tab }) {
       return <SocialScreen />;
     case "Slack":
       return <SlackScreen />;
+    case "Articles":
+      return <ArticlesScreen />;
+    case "Help Centers":
+      return <HelpCentersScreen />;
+    case "Knowledge Gaps":
+      return <KnowledgeGapsScreen />;
     default: {
       const item = findNavItem(tab) || { title: tab };
       return <ComingSoonScreen title={item.title} icon={item.icon} />;

@@ -17,7 +17,25 @@ export default defineNavConfig({
   // The spine of the workspace, plus the screen that unhides everything else.
   locked: ["Overview", "Inbox", "All Conversations", "Settings", "Navigation"],
 
-  hiddenByDefault: [],
+  // Destinations still on ComingSoon start hidden; Settings → Navigation can show them.
+  hiddenByDefault: [
+    "Phone",
+    "AI Agent",
+    "AI Performance",
+    "Customer Portal",
+    "Proactive",
+    "Custom Dashboards",
+    "Integrations",
+    "General",
+    "Brands",
+    "Seats & Licenses",
+    "Custom Fields & Objects",
+    "Import & Migration",
+    "Sandbox",
+    "Audit Logs",
+    "Security & Compliance",
+    "Plans & Billing",
+  ],
 
   dependencies: [
     // Inbox — every queue view is a lens on the conversation list.
