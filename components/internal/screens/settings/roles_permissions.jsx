@@ -2,11 +2,11 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Lock, Plus } from "lucide-react";
+import { Lock, Plus } from "lucide-react";
 
 import { MainScreenWrapper } from "@/components/internal/shared/screen_wrappers";
 import { ScreenHeader, StatsBar } from "@/components/internal/shared/screen_kit";
-import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Tabs, TabsList, TabsTrigger } from "@geiger/ui";
+import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, LogoLoading, Tabs, TabsList, TabsTrigger } from "@geiger/ui";
 import { ALL_PERMISSION_KEYS } from "@/lib/rbac";
 import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
 import { ROLE_TABS } from "./constants";
@@ -206,9 +206,8 @@ export function RolesPermissionsScreen() {
       </Tabs>
 
       {loading ? (
-        <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-subtle px-6 py-16 text-sm text-text-secondary">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading roles…
+        <div className="flex items-center justify-center rounded-xl border border-border bg-surface-subtle px-6 py-16">
+          <LogoLoading size={48} aria-label="Loading roles" />
         </div>
       ) : tab === "roles" ? (
         <RolesTab

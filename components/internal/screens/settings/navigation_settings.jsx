@@ -2,8 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
-import { NavVisibilitySettings } from "@geiger/ui";
+import { LogoLoading, NavVisibilitySettings } from "@geiger/ui";
 
 import { MainScreenWrapper } from "@/components/internal/shared/screen_wrappers";
 import { ScreenHeader, StatsBar } from "@/components/internal/shared/screen_kit";
@@ -67,9 +66,8 @@ export function NavigationSettingsScreen() {
     return (
       <MainScreenWrapper>
         {header}
-        <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-subtle px-6 py-16 text-sm text-text-secondary">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading navigation…
+        <div className="flex items-center justify-center rounded-xl border border-border bg-surface-subtle px-6 py-16">
+          <LogoLoading size={48} aria-label="Loading navigation" />
         </div>
       </MainScreenWrapper>
     );

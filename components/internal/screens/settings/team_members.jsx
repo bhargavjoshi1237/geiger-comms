@@ -2,14 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, ShieldCheck, UserPlus } from "lucide-react";
+import { ShieldCheck, UserPlus } from "lucide-react";
 
 import { MainScreenWrapper } from "@/components/internal/shared/screen_wrappers";
 import {
   ScreenHeader,
   StatsBar,
 } from "@/components/internal/shared/screen_kit";
-import { Button, Tabs, TabsList, TabsTrigger } from "@geiger/ui";
+import { Button, LogoLoading, Tabs, TabsList, TabsTrigger } from "@geiger/ui";
 import {
   Dialog,
   DialogContent,
@@ -269,9 +269,8 @@ export function TeamMembersScreen() {
       </Tabs>
 
       {loading ? (
-        <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-subtle px-6 py-16 text-sm text-text-secondary">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading team…
+        <div className="flex items-center justify-center rounded-xl border border-border bg-surface-subtle px-6 py-16">
+          <LogoLoading size={48} aria-label="Loading team" />
         </div>
       ) : tab === "members" ? (
         <MembersTab

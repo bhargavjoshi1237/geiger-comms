@@ -16,6 +16,7 @@ import {
   Plus,
   safeHref,
   Sparkles,
+  Spinner,
   StatusPill,
   UnreadCount,
   User,
@@ -472,7 +473,7 @@ function ThreadScreen({
           <>
             {state.hasOlder ? (
               <button type="button" className="gc-textbtn" onClick={loadOlder} disabled={loadingOlder}>
-                {loadingOlder ? "Loading…" : "Show earlier messages"}
+                {loadingOlder ? <Spinner className="gc-spinner--sm" /> : "Show earlier messages"}
               </button>
             ) : conversation?.createdAt ? (
               <div className="gc-daymark">

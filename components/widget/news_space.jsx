@@ -49,7 +49,7 @@ export function NewsSpace({ getApi, route, navigate, sessionKey }) {
         </HeaderBar>
         {rows === null && !failed ? (
           <div className="gc-panel__body">
-            <LoadingState label="Loading…" />
+            <LoadingState label="Loading update" />
           </div>
         ) : failed ? (
           <div className="gc-panel__body">

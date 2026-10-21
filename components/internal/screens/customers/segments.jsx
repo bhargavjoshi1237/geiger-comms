@@ -11,7 +11,6 @@ import { toast } from "sonner";
 import {
   ArrowRight,
   Copy,
-  Loader2,
   Pencil,
   Plus,
   Sparkles,
@@ -28,6 +27,7 @@ import {
   DialogHeader,
   DialogTitle,
   Input,
+  LogoLoading,
 } from "@geiger/ui";
 import { MainScreenWrapper } from "@/components/internal/shared/screen_wrappers";
 import {
@@ -485,9 +485,8 @@ export function SegmentsScreen() {
       </Toolbar>
 
       {loading ? (
-        <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-subtle px-6 py-16 text-sm text-text-secondary">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading segments…
+        <div className="flex items-center justify-center rounded-xl border border-border bg-surface-subtle px-6 py-16">
+          <LogoLoading size={48} aria-label="Loading segments" />
         </div>
       ) : (
         <div className="space-y-5">

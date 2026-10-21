@@ -357,11 +357,10 @@ export function Spinner({ className = "" }) {
 }
 
 // Section-level loader: the shared Geiger mark, sized for a panel body.
-export function LoadingState({ label = "Loading…" }) {
+export function LoadingState({ label = "Loading" }) {
   return (
     <div className="gc-state">
       <LogoLoading size={36} aria-label={label} />
-      <p className="gc-state__hint">{label}</p>
     </div>
   );
 }

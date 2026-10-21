@@ -59,18 +59,19 @@ export const TICKET_TYPE_LABELS = {
   tracker: "Tracker",
 };
 
-// Starting filter per preset (spec §4.2 — same component, different start).
+// Starting filter per preset (spec §4.2 — same component, different start); queues open on the Open tab, Mentions on All.
 export function presetFilter(preset) {
   const base = defaultFilter();
+  if (preset !== "mentions") base.status = ["Open"];
   if (preset === "mine") base.assignee = "me";
   if (preset === "mentions") base.mentioned = true;
   return base;
 }
 
-// True when `filter` narrows more than the preset's own baseline does (sort never counts).
+// True when `filter` narrows more than the preset's own baseline does; the status tab and sort never count.
 function isNarrowed(filter, preset) {
   const base = presetFilter(preset);
-  const keys = ["status", "channel", "priority", "tagIds"];
+  const keys = ["channel", "priority", "tagIds"];
   if (keys.some((k) => (filter[k]?.length || 0) !== (base[k]?.length || 0))) return true;
   return (
     (filter.assignee || null) !== (base.assignee || null) ||
@@ -587,9 +588,10 @@ export function useInboxShell({ preset = "all", startFilter }) {
     [channelParam],
   );
 
+  // Clears the filter menu and search but keeps the status tab the user is on.
   const clearFilters = useCallback(() => {
     setFocusedId(null);
-    setFilter(presetFilter(preset));
+    setFilter((prev) => ({ ...presetFilter(preset), status: prev.status, sort: prev.sort }));
     if (channelParam) closeChannel();
   }, [preset, channelParam, closeChannel]);
 

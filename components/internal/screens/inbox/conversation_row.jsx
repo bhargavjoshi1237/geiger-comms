@@ -1,37 +1,46 @@
 "use client";
 
-// One row in the conversation list pane. Presentational — everything arrives
-// via props from InboxShell (spec §4.2).
+// One row in the conversation list pane. Presentational — everything arrives via props from InboxShell (spec §4.2).
+// Three fixed lines: who + when, subject — latest message, then flags in a set order (status, urgent, waiting, tag) with the assignee pinned right.
 
 import { memo, useEffect, useRef } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@geiger/ui";
-import { CheckCheck, Pin } from "lucide-react";
-import { StatusPill } from "@/components/internal/shared/screen_kit";
+import { AlertTriangle, Clock, Tag, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   CONVERSATION_STATUS_MAP,
-  PRIORITY_META,
-  TAG_COLOR_MAP,
+  channelMeta,
+  contactLabel,
+  formatElapsed,
+  initials,
+  isKnownContact,
 } from "./constants";
 
-function initials(name) {
-  return (name || "?")
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() || "")
-    .join("");
+// Every flag on line 3 shares this shape: a 12px icon and a muted label.
+function Flag({ icon: Icon, iconClassName, title, className, children }) {
+  return (
+    <span title={title} className={cn("inline-flex shrink-0 items-center gap-1", className)}>
+      <Icon className={cn("size-3 shrink-0", iconClassName)} />
+      {children}
+    </span>
+  );
 }
 
 export const ConversationRow = memo(function ConversationRow({
   conversation,
   active,
   focused,
+  showStatus,
   onSelect,
 }) {
-  const priority = PRIORITY_META[conversation.priority] || PRIORITY_META.Normal;
-  const PriorityIcon = priority.icon;
-  const tags = conversation.tags || [];
   const ref = useRef(null);
+  const tags = conversation.tags || [];
+  const channel = conversation.channel || "Chat";
+  const ChannelIcon = channelMeta(channel).icon;
+  const subject = (conversation.subject || "").trim();
+  const preview = (conversation.preview || "").trim();
+  const waiting = conversation.waitingOnUs && conversation.status !== "Closed";
+  const statusMeta = showStatus && conversation.status !== "Open" ? CONVERSATION_STATUS_MAP[conversation.status] : null;
 
   // Keep the j/k keyboard cursor visible as it moves.
   useEffect(() => {
@@ -46,85 +55,94 @@ export const ConversationRow = memo(function ConversationRow({
       onClick={() => onSelect?.(conversation.id)}
       aria-current={active ? "true" : undefined}
       className={cn(
-        "flex w-full gap-3 border-b border-border px-4 py-3 text-left transition-colors last:border-b-0",
-        active ? "bg-surface-active" : "hover:bg-surface-hover",
+        "group flex w-full gap-3 rounded-lg p-2.5 text-left transition-colors",
+        active ? "bg-surface-active" : "hover:bg-surface-card",
         focused && "ring-1 ring-inset ring-border-strong",
       )}
     >
-      <Avatar className="mt-0.5 h-8 w-8 shrink-0">
-        <AvatarImage src={conversation.contactAvatar || undefined} alt="" />
-        <AvatarFallback className="text-xs">{initials(conversation.contactName)}</AvatarFallback>
-      </Avatar>
-
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              "truncate text-sm",
-              conversation.unread
-                ? "font-semibold text-foreground"
-                : "font-medium text-text-secondary",
-            )}
-          >
-            {conversation.subject || conversation.contactName}
-          </span>
-          <span className="ml-auto shrink-0 text-[11px] tabular-nums text-text-tertiary">
-            {formatListTime(conversation.lastMessageAt)}
-          </span>
-        </div>
-
-        <p
+      {/* Avatar box is fixed to the avatar's size so the channel badge sits on the avatar, not the row's bottom edge */}
+      <span className="relative mt-0.5 size-9 shrink-0 self-start">
+        <Avatar className="size-9">
+          <AvatarImage src={conversation.contactAvatar || undefined} alt="" />
+          <AvatarFallback className="bg-surface-hover text-xs font-medium text-foreground">
+            {isKnownContact(conversation) ? initials(conversation.contactName) : <User className="size-4 text-muted-foreground" />}
+          </AvatarFallback>
+        </Avatar>
+        <span
+          title={channel}
           className={cn(
-            "truncate text-xs",
-            conversation.unread ? "text-text-secondary" : "text-text-tertiary",
+            "absolute -bottom-1 -right-1 flex size-4 items-center justify-center rounded-full border-2 bg-surface-strong text-foreground",
+            active ? "border-surface-active" : "border-background group-hover:border-surface-card",
           )}
         >
-          {(conversation.preview || "No messages yet").trim()}
-        </p>
+          <ChannelIcon className="size-2.5" strokeWidth={2.4} aria-label={channel} />
+        </span>
+      </span>
 
-        <div className="mt-1 flex items-center gap-1.5">
-          <StatusPill
-            status={conversation.status}
-            map={CONVERSATION_STATUS_MAP}
-            className="h-5 px-1.5 text-[10px]"
-          />
-          <span
-            className={cn(
-              "inline-flex items-center gap-0.5 text-[10px] font-medium",
-              priority.className,
-            )}
-          >
-            <PriorityIcon className="h-3 w-3" />
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="flex h-5 items-center gap-2">
+          <span className={cn("truncate text-sm text-foreground", conversation.unread ? "font-semibold" : "font-medium")}>
+            {contactLabel(conversation)}
           </span>
-          <span className="truncate rounded-full border border-border bg-surface-hover px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-            {conversation.channel || "Chat"}
+          <span className="ml-auto flex shrink-0 items-center gap-1.5">
+            {conversation.unread ? (
+              <span role="img" aria-label="Unread" className="size-[7px] rounded-full bg-notification-dot" />
+            ) : null}
+            <span className="text-xs tabular-nums text-muted-foreground">{formatListTime(conversation.lastMessageAt)}</span>
           </span>
-          {conversation.assignee ? (
-            <span className="truncate text-[10px] text-text-tertiary">
-              {conversation.assignee}
+        </span>
+
+        <span className="mt-0.5 truncate text-[13px] leading-[18px]">
+          {subject ? <span className={cn("text-foreground", conversation.unread && "font-medium")}>{subject}</span> : null}
+          {preview && preview !== subject ? (
+            <span className="text-muted-foreground">
+              {subject ? " — " : ""}
+              {preview}
             </span>
+          ) : null}
+          {!subject && !preview ? <span className="text-muted-foreground">No messages yet</span> : null}
+        </span>
+
+        <span className="mt-1.5 flex h-5 min-w-0 items-center gap-3 text-xs text-muted-foreground">
+          {statusMeta ? (
+            <span className="inline-flex shrink-0 items-center gap-1.5">
+              <span className={cn("size-1.5 rounded-full", statusMeta.dotClass)} />
+              {statusMeta.label}
+            </span>
+          ) : null}
+          {conversation.priority === "Urgent" ? (
+            <Flag icon={AlertTriangle} iconClassName="text-red-400" className="text-foreground">
+              Urgent
+            </Flag>
+          ) : null}
+          {waiting ? (
+            <Flag icon={Clock} title="Waiting on your team">
+              Waiting {formatElapsed(conversation.lastMessageAt)}
+            </Flag>
           ) : null}
           {tags.length > 0 ? (
-            <span
-              className={cn(
-                "max-w-[80px] truncate rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
-                TAG_COLOR_MAP[tags[0].color] || TAG_COLOR_MAP.slate,
-              )}
-            >
-              {tags[0].name}
-              {tags.length > 1 ? ` +${tags.length - 1}` : ""}
-            </span>
+            <Flag icon={Tag} title={tags.map((t) => t.name).join(", ")} className="min-w-0 shrink">
+              <span className="truncate">{tags[0].name}</span>
+              {tags.length > 1 ? <span className="shrink-0">+{tags.length - 1}</span> : null}
+            </Flag>
           ) : null}
-          <span className="ml-auto flex items-center gap-1 text-text-tertiary">
-            {conversation.waitingOnUs && conversation.status !== "Closed" ? (
-              <Pin className="h-3 w-3 text-amber-400" aria-label="Waiting on us" />
-            ) : null}
-            {conversation.unread ? (
-              <CheckCheck className="h-3 w-3 text-primary" aria-label="Unread" />
-            ) : null}
-          </span>
-        </div>
-      </div>
+
+          {conversation.assignee ? (
+            <Avatar className="ml-auto size-5 shrink-0" title={`Assigned to ${conversation.assignee}`}>
+              <AvatarFallback className="bg-surface-strong text-[9px] font-semibold text-foreground">
+                {initials(conversation.assignee)}
+              </AvatarFallback>
+            </Avatar>
+          ) : (
+            <span
+              title="Unassigned"
+              aria-label="Unassigned"
+              role="img"
+              className="ml-auto size-5 shrink-0 rounded-full border border-dashed border-border-strong"
+            />
+          )}
+        </span>
+      </span>
     </button>
   );
 });

@@ -85,7 +85,12 @@ export function InboxShell({ preset = "all", startFilter, title }) {
   const activeLoading = threadOpen && !activeRow && !threadMissing;
   const contactProps = {
     tags: allTags,
+    teammates,
+    me,
     projectId,
+    assignDisabledReason: canAssign ? null : ASSIGN_DENIED,
+    onAssign: handleAssign,
+    onPriority: handlePriority,
     onToggleTag: handleToggleTag,
     onCreateTag: handleCreateTag,
     onCreateTicket: (conversation) => setTicketDraft(conversation),
@@ -94,7 +99,7 @@ export function InboxShell({ preset = "all", startFilter, title }) {
   return (
     <div className="flex h-full min-h-0 w-full">
       {/* list pane — full width below lg unless a thread is open */}
-      <div className={cn("h-full min-h-0 w-full shrink-0 lg:block lg:w-[380px]", threadOpen ? "hidden" : "block")}>
+      <div className={cn("h-full min-h-0 w-full shrink-0 lg:block lg:w-[340px]", threadOpen ? "hidden" : "block")}>
         <ConversationList
           title={title ?? TITLES[preset] ?? TITLES.all}
           preset={preset}
@@ -129,7 +134,6 @@ export function InboxShell({ preset = "all", startFilter, title }) {
           messages={messages}
           teammates={teammates}
           me={me}
-          tags={allTags}
           canReply={canReply}
           replyDisabledReason={canReply ? null : REPLY_DENIED}
           assignDisabledReason={canAssign ? null : ASSIGN_DENIED}
@@ -147,10 +151,7 @@ export function InboxShell({ preset = "all", startFilter, title }) {
           onSnooze={handleSnooze}
           onClose={handleClose}
           onReopen={handleReopen}
-          onPriority={handlePriority}
           onToggleRead={handleToggleRead}
-          onToggleTag={handleToggleTag}
-          onCreateTag={handleCreateTag}
           onCreateTicket={(conversation) => setTicketDraft(conversation)}
         />
       </div>
@@ -160,8 +161,8 @@ export function InboxShell({ preset = "all", startFilter, title }) {
 
       {/* contact sheet (below lg), opened from the thread header */}
       <Sheet open={contactOpen && Boolean(activeRow)} onOpenChange={setContactOpen}>
-        <SheetContent side="right" className="w-[320px] overflow-y-auto border-border p-4 pt-10 lg:hidden">
-          <SheetTitle className="sr-only">Contact details</SheetTitle>
+        <SheetContent side="right" className="w-[320px] overflow-y-auto border-border p-5 pt-10 lg:hidden">
+          <SheetTitle className="sr-only">Conversation details</SheetTitle>
           {activeRow ? <ContactDetails conversation={activeRow} {...contactProps} /> : null}
         </SheetContent>
       </Sheet>

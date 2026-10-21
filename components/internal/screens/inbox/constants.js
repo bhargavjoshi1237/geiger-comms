@@ -3,6 +3,7 @@
 // Overview screen's constants (inbox spec §1) and are re-exported here so the
 // inbox imports from one place.
 
+import { Mail, MessageCircle, MessageSquare, Share2, Slack, Smartphone } from "lucide-react";
 import {
   CONVERSATION_CHANNELS,
   CONVERSATION_STATUS_MAP,
@@ -19,6 +20,9 @@ export const STATUS_FILTER_OPTIONS = [
   { value: "Snoozed", label: "Snoozed" },
   { value: "Closed", label: "Closed" },
 ];
+
+// List-pane status tabs; "all" clears the status filter.
+export const STATUS_TABS = [...STATUS_FILTER_OPTIONS, { value: "all", label: "All" }];
 
 export const CHANNEL_FILTER_OPTIONS = CONVERSATION_CHANNELS.map((c) => ({
   value: c,
@@ -42,6 +46,20 @@ export function displayChannelFor(channel) {
     return SOCIAL_NETWORK_CHANNEL[network] ?? "Instagram";
   }
   return KIND_DISPLAY_CHANNEL[channel.kind] ?? "Chat";
+}
+
+// conversations.channel display text → glyph + how a message arrives ("started this conversation by email").
+const CHANNEL_META = {
+  Email: { icon: Mail, via: "by email" },
+  Chat: { icon: MessageCircle, via: "in chat" },
+  WhatsApp: { icon: Smartphone, via: "on WhatsApp" },
+  SMS: { icon: MessageSquare, via: "by SMS" },
+  Slack: { icon: Slack, via: "in Slack" },
+};
+
+export function channelMeta(channel) {
+  const name = channel || "Chat";
+  return CHANNEL_META[name] ?? { icon: Share2, via: `on ${name}` };
 }
 
 export const PRIORITY_FILTER_OPTIONS = [
@@ -227,6 +245,87 @@ export const TAG_COLOR_MAP = {
   violet: "text-violet-300 bg-violet-400/10 border-violet-400/20",
   pink: "text-pink-300 bg-pink-400/10 border-pink-400/20",
 };
+
+// ---- display helpers ---------------------------------------------------------------
+
+export function initials(name) {
+  return (name || "?")
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() || "")
+    .join("");
+}
+
+// The data layer defaults a missing contact name to "Unknown"; fall back to the email, then a plain label.
+export function contactLabel(conversation) {
+  const name = conversation?.contactName;
+  if (name && name !== "Unknown") return name;
+  return conversation?.contactEmail || "Unknown visitor";
+}
+
+export function isKnownContact(conversation) {
+  const name = conversation?.contactName;
+  return Boolean(name && name !== "Unknown");
+}
+
+function toDate(value) {
+  const d = value ? new Date(value) : null;
+  return d && !Number.isNaN(d.getTime()) ? d : null;
+}
+
+// Local calendar day, used to group thread messages under day dividers.
+export function dayKey(value) {
+  const d = toDate(value);
+  return d ? `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}` : "";
+}
+
+export function formatClock(value) {
+  const d = toDate(value);
+  return d ? d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+}
+
+// "Today" / "Yesterday" / "Mon, Oct 19" / "Oct 19, 2025".
+export function formatDayLabel(value, nowMs) {
+  const d = toDate(value);
+  if (!d) return "";
+  const now = new Date(nowMs ?? Date.now());
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (dayKey(d) === dayKey(now)) return "Today";
+  if (dayKey(d) === dayKey(yesterday)) return "Yesterday";
+  if (d.getFullYear() === now.getFullYear()) {
+    return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  }
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+// "Today, 9:12 AM" / "Mon, Oct 19, 9:12 AM".
+export function formatDayTime(value, nowMs) {
+  const day = formatDayLabel(value, nowMs);
+  return day ? `${day}, ${formatClock(value)}` : "";
+}
+
+// A clock time for today, otherwise a date ("Oct 19", or "Oct 19, 2025" in another year).
+export function formatWhen(value, nowMs) {
+  const d = toDate(value);
+  if (!d) return "";
+  const now = new Date(nowMs ?? Date.now());
+  if (dayKey(d) === dayKey(now)) return formatClock(d);
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }) });
+}
+
+// Compact time since `value` ("now", "14m", "3h", "2d").
+export function formatElapsed(value, nowMs) {
+  const d = toDate(value);
+  if (!d) return "";
+  const minutes = Math.max(0, Math.floor(((nowMs ?? Date.now()) - d.getTime()) / 60000));
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
 
 // ---- keyboard shortcuts --------------------------------------------------------------
 
