@@ -10,21 +10,25 @@ import {
   AvatarStack,
   Banner,
   CheckCheck,
+  CircleCheck,
   ErrorState,
+  FileCard,
+  firstName,
   HeaderBar,
   LoadingState,
+  PageHead,
   Plus,
+  Presence,
   safeHref,
-  Sparkles,
   Spinner,
-  StatusPill,
+  Tag,
   UnreadCount,
   User,
 } from "./widget_primitives";
 import { Composer } from "./composer";
 import { stripMetadata } from "./image";
 import { MarkdownView } from "./markdown_view";
-import { NewConversationView } from "./new_conversation";
+import { NewConversationView, splitSubject } from "./new_conversation";
 import { RatingCard } from "./rating";
 
 const PAGE_SIZE = 50; // the API's thread page size
@@ -38,6 +42,23 @@ function formatTime(iso) {
   }
 }
 
+// "Today · 10:24", "Yesterday · 16:02", "12 Oct · 09:15" — the divider a thread opens with.
+function dayStamp(iso) {
+  const t = Date.parse(iso || "");
+  if (Number.isNaN(t)) return "";
+  const d = new Date(t);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const same = (a, b) => a.toDateString() === b.toDateString();
+  const day = same(d, today)
+    ? "Today"
+    : same(d, yesterday)
+      ? "Yesterday"
+      : d.toLocaleDateString([], { day: "numeric", month: "short" });
+  return `${day} · ${formatTime(iso)}`;
+}
+
 function relativeShort(iso) {
   if (!iso) return "";
   try {
@@ -45,7 +66,9 @@ function relativeShort(iso) {
     if (diff < 1) return "now";
     if (diff < 60) return `${diff}m`;
     if (diff < 60 * 24) return `${Math.round(diff / 60)}h`;
-    return `${Math.round(diff / (60 * 24))}d`;
+    const days = Math.round(diff / (60 * 24));
+    if (days < 7) return `${days}d`;
+    return new Date(iso).toLocaleDateString([], { day: "numeric", month: "short" });
   } catch {
     return "";
   }
@@ -90,6 +113,7 @@ export function MessagesSpace({
   config,
   route,
   navigate,
+  postToHost,
   conversations,
   conversationsFailed,
   reloadConversations,
@@ -100,6 +124,8 @@ export function MessagesSpace({
   onSeen,
   visible = true,
 }) {
+  const close = () => postToHost?.("close");
+
   if (route.compose || route.newAbout) {
     return (
       <NewConversationView
@@ -108,6 +134,7 @@ export function MessagesSpace({
         initialKind={route.newAbout}
         initialDraft={route.draft}
         onBack={() => navigate({ space: "messages" })}
+        onClose={close}
         onSent={(conversation) => {
           reloadConversations?.();
           navigate({ space: "messages", conversationId: conversation.id });
@@ -130,6 +157,8 @@ export function MessagesSpace({
         sessionKey={sessionKey}
         visible={visible}
         onBack={() => navigate({ space: "messages" })}
+        onClose={close}
+        onNew={() => navigate({ space: "messages", compose: true })}
         onSeen={onSeen}
         onConversationsChanged={reloadConversations}
       />
@@ -145,11 +174,21 @@ export function MessagesSpace({
       load={reloadConversations}
       open={(c) => navigate({ space: "messages", conversationId: c.id })}
       onNew={() => navigate({ space: "messages", compose: true })}
+      onClose={close}
     />
   );
 }
 
-function ConversationsList({ conversations, failed, unreadMap, config, load, open, onNew }) {
+// "Maya: I've voided…" / "You: I added the record…" — who spoke last, ahead of the preview.
+function previewAuthor(c, assistant) {
+  const kind = c.lastAuthorRole ? authorKind(c.lastAuthorRole) : null;
+  if (kind === "visitor") return "You";
+  if (kind === "agent") return firstName(c.agentName);
+  if (kind === "ai") return assistant;
+  return "";
+}
+
+function ConversationsList({ conversations, failed, unreadMap, config, load, open, onNew, onClose }) {
   const [filter, setFilter] = useState("open");
 
   const rows = conversations ?? [];
@@ -162,101 +201,123 @@ function ConversationsList({ conversations, failed, unreadMap, config, load, ope
 
   return (
     <>
-      <header className="gc-listhead">
-        <span className="gc-listhead__title">Your conversations</span>
-        <button type="button" className="gc-primarybtn" onClick={onNew}>
+      <PageHead title="Messages" onClose={onClose}>
+        <button type="button" className="gc-btn gc-btn--accent gc-btn--sm" onClick={onNew}>
           <Plus />
           New
         </button>
-      </header>
+      </PageHead>
+
+      <div className="gc-segwrap">
+        <div className="gc-seg" role="tablist" aria-label="Filter conversations">
+          {[
+            ["open", "Open", openRows.length],
+            ["closed", "Closed", closedRows.length],
+          ].map(([id, label, n]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              className="gc-seg__btn"
+              aria-selected={filter === id}
+              onClick={() => setFilter(id)}
+            >
+              {label}
+              <span className="gc-seg__n">{n}</span>
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="gc-panel__body gc-panel__body--stack">
-        <div className="gc-filters" role="tablist" aria-label="Filter conversations">
-          <button
-            type="button"
-            role="tab"
-            className="gc-filter"
-            aria-selected={filter === "open"}
-            onClick={() => setFilter("open")}
-          >
-            Open · {openRows.length}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            className="gc-filter"
-            aria-selected={filter === "closed"}
-            onClick={() => setFilter("closed")}
-          >
-            Closed · {closedRows.length}
-          </button>
-        </div>
-
         {conversations === null && !failed ? (
           <LoadingState label="Loading conversations…" />
         ) : failed ? (
           <ErrorState title="Couldn't load your messages" onRetry={load} />
+        ) : shown.length === 0 ? (
+          <div className="gc-state">
+            <p className="gc-state__title">
+              {filter === "open" ? "No open conversations" : "No closed conversations"}
+            </p>
+            {filter === "open" ? <p className="gc-state__hint">Tap New to start one.</p> : null}
+          </div>
         ) : (
-          <>
-            {shown.map((c, i) => {
+          <div className="gc-list">
+            {shown.map((c) => {
               const unread = unreadMap?.[c.id] || 0;
+              const closed = c.state === "closed";
+              const { topic, title } = splitSubject(c.subject);
+              const who = previewAuthor(c, assistant);
               return (
                 <button
                   key={c.id}
                   type="button"
                   className="gc-convo"
-                  data-active={i === 0 && filter === "open"}
-                  data-closed={c.state === "closed"}
+                  data-unread={unread > 0}
+                  data-closed={closed}
                   onClick={() => open(c)}
                 >
                   {c.aiOnly ? (
-                    <div className="gc-avatar gc-avatar--lg" aria-hidden="true">
-                      <Sparkles size={14} />
-                    </div>
+                    <Avatar size="lg" ai />
                   ) : (
-                    <Avatar name={c.agentName || c.subject || config?.name} size="lg" />
+                    <Avatar
+                      name={c.agentName || c.subject || config?.name}
+                      size="lg"
+                      muted={closed}
+                      showStatus={!closed && Boolean(c.agentName)}
+                      online={config?.teamOnline === true}
+                    />
                   )}
-                  <div className="gc-convo__body">
-                    <div className="gc-convo__top">
-                      <span className="gc-convo__title">{c.subject || "Your conversation"}</span>
+                  <span className="gc-convo__body">
+                    <span className="gc-convo__top">
+                      <span className="gc-convo__title">{title || "Your conversation"}</span>
                       <span className="gc-convo__time">{relativeShort(c.lastActivityAt || c.updatedAt)}</span>
-                    </div>
-                    <p className={unread ? "gc-convo__preview gc-convo__preview--unread" : "gc-convo__preview"}>
-                      {c.previewAuthor ? <strong>{c.previewAuthor}:</strong> : null} {c.preview || "—"}
-                    </p>
-                    <div className="gc-convo__meta">
-                      <StatusPill status={c.state === "closed" ? "closed" : "open"} />
+                    </span>
+                    <span className="gc-convo__line">
+                      <span className="gc-convo__preview">
+                        {who ? `${who}: ` : ""}
+                        {c.preview || "—"}
+                      </span>
                       {unread ? <UnreadCount count={unread} /> : null}
-                    </div>
-                  </div>
+                    </span>
+                    {closed || topic ? (
+                      <span className="gc-convo__tags">
+                        {closed ? (
+                          <Tag>
+                            <CircleCheck />
+                            Closed
+                          </Tag>
+                        ) : null}
+                        {topic ? <Tag>{topic}</Tag> : null}
+                      </span>
+                    ) : null}
+                  </span>
                 </button>
               );
             })}
-
-            {shown.length === 0 ? (
-              <div className="gc-state">
-                <p className="gc-state__title">
-                  {filter === "open" ? "No open conversations" : "No closed conversations"}
-                </p>
-                {filter === "open" ? <p className="gc-state__hint">Tap New to start one.</p> : null}
-              </div>
-            ) : null}
-
-            {teamKnown ? (
-              <div className="gc-listfoot">
-                <div className="gc-teamcard">
-                  {team.length ? <AvatarStack people={team} /> : null}
-                  <span>
-                    {config.teamOnline
-                      ? "The team is online"
-                      : `The team is away${assistant ? ` — ${assistant} can still help` : ""}`}
-                  </span>
-                </div>
-              </div>
-            ) : null}
-          </>
+          </div>
         )}
       </div>
+
+      {teamKnown && !failed && conversations !== null ? (
+        <div className="gc-listfoot">
+          <div className="gc-teamcard">
+            {team.length ? <AvatarStack people={team} /> : null}
+            <span className="gc-teamcard__text">
+              <span className="gc-teamcard__title">
+                <Presence online={config.teamOnline} backAt={config?.backAt} />
+              </span>
+              <span className="gc-teamcard__sub">
+                {config.teamOnline
+                  ? config?.officeHoursNote || "We'll reply here as soon as we can."
+                  : assistant
+                    ? `${assistant} can still help in the meantime.`
+                    : "Leave a message and we'll reply here."}
+              </span>
+            </span>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
@@ -272,6 +333,8 @@ function ThreadScreen({
   sessionKey,
   visible,
   onBack,
+  onClose,
+  onNew,
   onSeen,
   onConversationsChanged,
 }) {
@@ -401,36 +464,29 @@ function ThreadScreen({
   const handedOver = conversation?.state === "human" || Boolean(conversation?.handedOverAt);
   const aiThread = Boolean(assistant) && !handedOver && Boolean(conversation?.aiOnly);
   const lastAgent = [...state.messages].reverse().find((m) => authorKind(m.authorRole) === "agent");
-  const person = {
-    name: aiThread ? assistant : conversation?.agentName || lastAgent?.authorName || config?.name || "Support",
-    role: closed ? "Closed" : aiThread ? "AI assistant" : config?.officeHoursNote || "The team will reply here",
-  };
+  const name = aiThread ? assistant : conversation?.agentName || lastAgent?.authorName || config?.name || "Support";
+  const subject = splitSubject(conversation?.subject).title;
+  const online = config?.teamOnline === true && !closed && !aiThread;
+  const sub = aiThread
+    ? "AI assistant"
+    : [online ? "Active now" : "", subject || (closed ? "" : config?.officeHoursNote || "The team will reply here")]
+        .filter(Boolean)
+        .join(" · ");
+  const lastAt = state.messages.length ? state.messages[state.messages.length - 1].createdAt : null;
 
   return (
     <>
-      {closed ? (
-        <header className="gc-header gc-header--bar">
-          <Avatar name={person.name} size="sm" />
-          <span className="gc-header__title">{person.name}</span>
-          <StatusPill status="closed" />
-        </header>
-      ) : (
-        <HeaderBar onBack={onBack}>
-          {aiThread ? (
-            <div className="gc-avatar" aria-hidden="true">
-              <Sparkles size={14} />
-            </div>
-          ) : (
-            <Avatar name={person.name} showStatus online={config?.teamOnline === true} />
-          )}
-          <div className="gc-header__ident">
-            <div className="gc-header__identtop">
-              <span className="gc-header__name">{person.name}</span>
-              {aiThread ? <AiBadge /> : null}
-            </div>
-            <span className="gc-header__sub">{person.role}</span>
-          </div>
-          {aiThread ? (
+      <HeaderBar
+        onBack={onBack}
+        backLabel="Back to messages"
+        onClose={onClose}
+        action={
+          closed ? (
+            <Tag>
+              <CircleCheck />
+              Closed
+            </Tag>
+          ) : aiThread ? (
             <button
               type="button"
               className="gc-ghostbtn"
@@ -439,9 +495,18 @@ function ThreadScreen({
               <User />
               Get a human
             </button>
-          ) : null}
-        </HeaderBar>
-      )}
+          ) : null
+        }
+      >
+        <Avatar name={name} ai={aiThread} muted={closed} showStatus online={online} />
+        <span className="gc-bar__ident">
+          <span className="gc-bar__name">
+            <span className="gc-bar__nametext">{name}</span>
+            {aiThread ? <AiBadge /> : null}
+          </span>
+          {sub ? <span className="gc-bar__sub">{sub}</span> : null}
+        </span>
+      </HeaderBar>
 
       {handedOver && !closed && assistant ? (
         <Banner tone="info">{assistant} handed this conversation to a teammate</Banner>
@@ -449,10 +514,10 @@ function ThreadScreen({
 
       <div
         ref={threadRef}
-        className={aiThread && !closed ? "gc-thread" : "gc-thread gc-thread--tight"}
+        className="gc-thread"
         role="log"
         aria-live="polite"
-        aria-label={`Conversation with ${person.name}`}
+        aria-label={`Conversation with ${name}`}
       >
         {state.status === "loading" ? (
           <LoadingState label="Loading messages…" />
@@ -472,30 +537,33 @@ function ThreadScreen({
         ) : (
           <>
             {state.hasOlder ? (
-              <button type="button" className="gc-textbtn" onClick={loadOlder} disabled={loadingOlder}>
+              <button type="button" className="gc-older" onClick={loadOlder} disabled={loadingOlder}>
                 {loadingOlder ? <Spinner className="gc-spinner--sm" /> : "Show earlier messages"}
               </button>
-            ) : conversation?.createdAt ? (
-              <div className="gc-daymark">
-                {new Date(conversation.createdAt).toLocaleDateString([], { month: "short", day: "numeric" })}{" "}
-                {formatTime(conversation.createdAt)}
-              </div>
+            ) : conversation?.createdAt || state.messages[0]?.createdAt ? (
+              <div className="gc-divider">{dayStamp(conversation?.createdAt || state.messages[0].createdAt)}</div>
             ) : null}
 
             {state.messages.map((m) => (
               <MessageRow key={m.id} message={m} assistant={assistant} />
             ))}
 
-            {closed && !rating ? (
-              <RatingCard
-                agentName={person.name.split(" ")[0]}
-                onSubmit={(payload) => {
-                  setRating(payload);
-                  getApi()?.rate?.(conversationId, payload.score, payload.comment);
-                  onConversationsChanged?.();
-                }}
-                onSkip={() => setRating({})}
-              />
+            {closed ? (
+              <>
+                <div className="gc-divider">
+                  {lastAt ? `Conversation closed · ${formatTime(lastAt)}` : "Conversation closed"}
+                </div>
+                <RatingCard
+                  agentName={aiThread ? "" : firstName(name)}
+                  result={rating}
+                  onSubmit={(payload) => {
+                    setRating(payload);
+                    getApi()?.rate?.(conversationId, payload.score, payload.comment);
+                    onConversationsChanged?.();
+                  }}
+                  onSkip={() => setRating({ skipped: true })}
+                />
+              </>
             ) : null}
           </>
         )}
@@ -503,11 +571,18 @@ function ThreadScreen({
 
       {sendError ? <Banner tone="warn">{sendError}</Banner> : null}
 
-      {closed ? null : (
+      {closed ? (
+        <div className="gc-closedfoot">
+          <button type="button" className="gc-btn gc-btn--outline gc-btn--block" onClick={onNew}>
+            <Plus />
+            Start a new conversation
+          </button>
+        </div>
+      ) : (
         <Composer
-          placeholder={aiThread ? "Message…" : `Message ${person.name.split(" ")[0]}…`}
+          placeholder={aiThread ? "Message…" : "Write a reply…"}
+          label={aiThread ? `Message ${assistant}` : `Reply to ${firstName(name) || name}`}
           note={aiThread ? `${assistant} is an AI assistant. Ask for a person any time.` : undefined}
-          allowImages={aiThread}
           value={draft}
           onValueChange={setDraft}
           sending={sending}
@@ -520,85 +595,69 @@ function ThreadScreen({
   );
 }
 
+// An upload is sent as a message whose body is the file name; the card already says it, so the bubble is dropped.
+function bodyIsFileName(message) {
+  const files = message.attachments || [];
+  return files.length > 0 && files.some((f) => f?.name && f.name === String(message.body || "").trim());
+}
+
+function Files({ files, mine }) {
+  const cards = (files || []).filter((f) => safeHref(f?.url));
+  if (!cards.length) return null;
+  return cards.map((f, i) => <FileCard key={`${f.url}-${i}`} file={f} mine={mine} />);
+}
+
 function MessageRow({ message, assistant }) {
   const kind = authorKind(message.authorRole);
   const files = message.attachments || [];
+  const showBody = Boolean(message.body) && !bodyIsFileName(message);
 
   if (kind === "system") {
-    return (
-      <div className="gc-rule">
-        <span className="gc-rule__label">{message.body}</span>
-      </div>
-    );
+    return <div className="gc-syspill">{message.body}</div>;
   }
 
   if (kind === "visitor") {
+    const pending = isOptimistic(message);
     return (
       <div className="gc-sent">
-        <div className="gc-bubble gc-bubble--user">
-          {message.body ? <MarkdownView text={message.body} /> : null}
-          <Attachments files={files} />
-        </div>
-        <span className="gc-receipt">
-          {isOptimistic(message)
-            ? "Sending…"
-            : message.readAt
-              ? `Read ${formatTime(message.readAt)}`
-              : formatTime(message.createdAt)}
-          {isOptimistic(message) ? null : <CheckCheck />}
+        {showBody ? (
+          <div className="gc-bubble gc-bubble--user">
+            <MarkdownView text={message.body} />
+          </div>
+        ) : null}
+        <Files files={files} mine />
+        <span className="gc-receipt" data-read={Boolean(message.readAt)}>
+          {pending ? null : <CheckCheck />}
+          {pending ? "Sending…" : message.readAt ? `Read ${formatTime(message.readAt)}` : formatTime(message.createdAt)}
         </span>
       </div>
     );
   }
 
-  if (kind === "agent") {
-    return (
-      <div className="gc-msgrow">
-        <Avatar name={message.authorName || "Support"} size="sm" />
-        <div className="gc-bubble gc-bubble--agent">
-          <MarkdownView text={message.body} />
-          <Attachments files={files} />
-          <span className="gc-bubble__time">{formatTime(message.createdAt)}</span>
-        </div>
-      </div>
-    );
-  }
+  const ai = kind === "ai";
+  const author = ai ? message.authorName || assistant || "AI assistant" : message.authorName || "Support";
 
   // AI replies are always labelled as AI in the thread itself (spec §13, EU AI Act Art. 50).
   return (
     <div className="gc-msgrow">
-      <div className="gc-avatar gc-avatar--sm" aria-hidden="true">
-        <Sparkles size={12} />
-      </div>
-      <div className="gc-bubble gc-bubble--agent">
-        <MarkdownView text={message.body} />
-        <Attachments files={files} />
-        <span className="gc-row-meta">
-          <span className="gc-bubble__time">
-            {message.authorName || assistant || "AI assistant"} · {formatTime(message.createdAt)}
-          </span>
-          <AiBadge />
-          <span className="gc-sr">This reply was written by AI.</span>
+      <Avatar name={author} size="sm" ai={ai} />
+      <div className="gc-msgcol">
+        {showBody ? (
+          <div className="gc-bubble">
+            <MarkdownView text={message.body} />
+          </div>
+        ) : null}
+        <Files files={files} />
+        <span className="gc-msgmeta">
+          {ai ? author : firstName(author)} · {formatTime(message.createdAt)}
+          {ai ? (
+            <>
+              <AiBadge />
+              <span className="gc-sr">This reply was written by AI.</span>
+            </>
+          ) : null}
         </span>
       </div>
     </div>
-  );
-}
-
-function Attachments({ files }) {
-  const links = (files || [])
-    .map((a) => ({ href: safeHref(a?.url), name: typeof a?.name === "string" ? a.name : "" }))
-    .filter((a) => a.href);
-  if (!links.length) return null;
-  return (
-    <ul className="gc-bubble__files">
-      {links.map((a, i) => (
-        <li key={`${a.href}-${i}`}>
-          <a href={a.href} target="_blank" rel="noopener noreferrer nofollow">
-            {a.name || "Attachment"}
-          </a>
-        </li>
-      ))}
-    </ul>
   );
 }

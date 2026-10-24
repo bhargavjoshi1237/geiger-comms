@@ -4,7 +4,7 @@
 // Rows reuse the conversation-row shell so the space sits in the same visual family as Messages.
 
 import { useCallback, useEffect, useState } from "react";
-import { ErrorState, HeaderBar, LoadingState, StatusPill } from "./widget_primitives";
+import { ErrorState, HeaderBar, LoadingState, PageHead, StatusPill } from "./widget_primitives";
 import { MarkdownView } from "./markdown_view";
 
 // Ticket states map onto the three pills the design draws.
@@ -31,7 +31,7 @@ function formatDate(iso) {
   }
 }
 
-export function TicketsSpace({ getApi, route, navigate, sessionKey, syncTick }) {
+export function TicketsSpace({ getApi, route, navigate, postToHost, sessionKey, syncTick }) {
   const [rows, setRows] = useState(null);
   const [failed, setFailed] = useState(false);
 
@@ -49,6 +49,8 @@ export function TicketsSpace({ getApi, route, navigate, sessionKey, syncTick }) 
     load();
   }, [load, sessionKey, syncTick]);
 
+  const close = () => postToHost?.("close");
+
   const retry = () => {
     setFailed(false);
     setRows(null);
@@ -59,8 +61,8 @@ export function TicketsSpace({ getApi, route, navigate, sessionKey, syncTick }) 
     const ticket = rows?.find((t) => t.id === route.ticketId) ?? null;
     return (
       <>
-        <HeaderBar onBack={() => navigate({ space: "tickets" })}>
-          <span className="gc-header__eyebrow">TICKET</span>
+        <HeaderBar onBack={() => navigate({ space: "tickets" })} backLabel="Back to tickets" onClose={close}>
+          <span className="gc-bar__crumb">Tickets</span>
         </HeaderBar>
         <div className="gc-panel__body gc-panel__body--stack">
           {rows === null && !failed ? (
@@ -83,9 +85,7 @@ export function TicketsSpace({ getApi, route, navigate, sessionKey, syncTick }) 
 
   return (
     <>
-      <header className="gc-listhead">
-        <span className="gc-listhead__title">Your tickets</span>
-      </header>
+      <PageHead title="Tickets" onClose={close} />
 
       <div className="gc-panel__body gc-panel__body--stack">
         {rows === null && !failed ? (
@@ -98,26 +98,28 @@ export function TicketsSpace({ getApi, route, navigate, sessionKey, syncTick }) 
             <p className="gc-state__hint">Requests your team tracks for you will appear here.</p>
           </div>
         ) : (
-          rows.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className="gc-convo"
-              data-closed={t.state === "resolved"}
-              onClick={() => navigate({ space: "tickets", ticketId: t.id })}
-            >
-              <div className="gc-convo__body">
-                <div className="gc-convo__top">
-                  <span className="gc-convo__title">{t.title || "Ticket"}</span>
-                  <span className="gc-convo__time">{t.reference ? `#${t.reference}` : formatDate(t.createdAt)}</span>
-                </div>
-                {t.description ? <p className="gc-convo__preview">{t.description}</p> : null}
-                <div className="gc-convo__meta">
-                  <StatusPill status={PILL[t.state] || "open"} />
-                </div>
-              </div>
-            </button>
-          ))
+          <div className="gc-list gc-list--top">
+            {rows.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className="gc-convo"
+                data-closed={t.state === "resolved"}
+                onClick={() => navigate({ space: "tickets", ticketId: t.id })}
+              >
+                <span className="gc-convo__body">
+                  <span className="gc-convo__top">
+                    <span className="gc-convo__title">{t.title || "Ticket"}</span>
+                    <span className="gc-convo__time">{t.reference ? `#${t.reference}` : formatDate(t.createdAt)}</span>
+                  </span>
+                  {t.description ? <span className="gc-convo__preview">{t.description}</span> : null}
+                  <span className="gc-convo__tags">
+                    <StatusPill status={PILL[t.state] || "open"} />
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
         )}
       </div>
     </>
@@ -127,23 +129,20 @@ export function TicketsSpace({ getApi, route, navigate, sessionKey, syncTick }) 
 function TicketDetail({ ticket, navigate }) {
   return (
     <article className="gc-article">
-      <h2>{ticket.title || "Ticket"}</h2>
-      <div className="gc-article__byline">
-        <span>
-          {(STATE_LABEL[ticket.state] || "Open").toUpperCase()}
-          {ticket.createdAt ? ` · OPENED ${formatDate(ticket.createdAt).toUpperCase()}` : ""}
+      <h1 className="gc-article__title">{ticket.title || "Ticket"}</h1>
+      <div className="gc-byline">
+        <StatusPill status={PILL[ticket.state] || "open"} />
+        <span className="gc-byline__date">
+          {STATE_LABEL[ticket.state] || "Open"}
+          {ticket.createdAt ? ` · Opened ${formatDate(ticket.createdAt)}` : ""}
         </span>
       </div>
-      <div className="gc-article__divider" />
-      {ticket.description ? (
-        <div className="gc-article__p">
-          <MarkdownView text={ticket.description} />
-        </div>
-      ) : null}
+      <hr className="gc-article__rule" />
+      {ticket.description ? <MarkdownView text={ticket.description} className="gc-prose" /> : null}
       {ticket.conversationId ? (
         <button
           type="button"
-          className="gc-outlinebtn"
+          className="gc-btn gc-btn--outline gc-btn--block"
           onClick={() => navigate({ space: "messages", conversationId: ticket.conversationId })}
         >
           Open the conversation

@@ -3,7 +3,7 @@
 // News (spec §9) — published posts with a simple reader, in the help centre's row idiom. Bodies render through MarkdownView.
 
 import { useCallback, useEffect, useState } from "react";
-import { ErrorState, FileText, HeaderBar, LoadingState } from "./widget_primitives";
+import { ChevronRight, ErrorState, HeaderBar, LoadingState, PageHead } from "./widget_primitives";
 import { MarkdownView } from "./markdown_view";
 
 function formatDate(iso) {
@@ -15,7 +15,7 @@ function formatDate(iso) {
   }
 }
 
-export function NewsSpace({ getApi, route, navigate, sessionKey }) {
+export function NewsSpace({ getApi, route, navigate, postToHost, sessionKey }) {
   const [rows, setRows] = useState(null);
   const [failed, setFailed] = useState(false);
 
@@ -40,12 +40,13 @@ export function NewsSpace({ getApi, route, navigate, sessionKey }) {
   };
 
   const post = route.postId ? rows?.find((p) => p.id === route.postId) : null;
+  const close = () => postToHost?.("close");
 
   if (route.postId) {
     return (
       <>
-        <HeaderBar onBack={() => navigate({ space: "news" })}>
-          <span className="gc-header__eyebrow">UPDATE</span>
+        <HeaderBar onBack={() => navigate({ space: "news" })} backLabel="Back to news" onClose={close}>
+          <span className="gc-bar__crumb">News</span>
         </HeaderBar>
         {rows === null && !failed ? (
           <div className="gc-panel__body">
@@ -65,14 +66,12 @@ export function NewsSpace({ getApi, route, navigate, sessionKey }) {
           </div>
         ) : (
           <article className="gc-article">
-            <h2>{post.title}</h2>
-            <div className="gc-article__byline">
-              <span>{formatDate(post.publishedAt).toUpperCase()}</span>
+            <h1 className="gc-article__title">{post.title}</h1>
+            <div className="gc-byline">
+              <span className="gc-byline__date">{formatDate(post.publishedAt)}</span>
             </div>
-            <div className="gc-article__divider" />
-            <div className="gc-article__p">
-              <MarkdownView text={post.body} />
-            </div>
+            <hr className="gc-article__rule" />
+            <MarkdownView text={post.body} variant="article" className="gc-prose" />
           </article>
         )}
       </>
@@ -81,11 +80,9 @@ export function NewsSpace({ getApi, route, navigate, sessionKey }) {
 
   return (
     <>
-      <header className="gc-listhead">
-        <span className="gc-listhead__title">What&rsquo;s new</span>
-      </header>
+      <PageHead title="What’s new" onClose={close} />
 
-      <div className="gc-panel__body" style={{ padding: "12px 0" }}>
+      <div className="gc-panel__body gc-help">
         {rows === null && !failed ? (
           <LoadingState label="Loading news…" />
         ) : failed ? (
@@ -95,21 +92,23 @@ export function NewsSpace({ getApi, route, navigate, sessionKey }) {
             <p className="gc-state__title">No updates yet</p>
           </div>
         ) : (
-          rows.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className="gc-article-row"
-              onClick={() => navigate({ space: "news", postId: p.id })}
-            >
-              <FileText size={14} className="gc-article-row__icon" />
-              <span style={{ minWidth: 0 }}>
-                <span className="gc-article-row__title">{p.title}</span>
-                {p.summary ? <span className="gc-article-row__desc">{p.summary}</span> : null}
-                <span className="gc-article-row__meta">{formatDate(p.publishedAt).toUpperCase()}</span>
-              </span>
-            </button>
-          ))
+          <div className="gc-articles">
+            {rows.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className="gc-article-row"
+                onClick={() => navigate({ space: "news", postId: p.id })}
+              >
+                <span className="gc-article-row__body">
+                  <span className="gc-article-row__meta">{formatDate(p.publishedAt)}</span>
+                  <span className="gc-article-row__title">{p.title}</span>
+                  {p.summary ? <span className="gc-article-row__desc">{p.summary}</span> : null}
+                </span>
+                <ChevronRight className="gc-article-row__chev" />
+              </button>
+            ))}
+          </div>
         )}
       </div>
     </>
