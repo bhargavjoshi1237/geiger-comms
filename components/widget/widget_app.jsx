@@ -168,6 +168,7 @@ export function WidgetApp() {
   const listTimerRef = useRef(null);
   const pendingRef = useRef([]);
   const unreadRef = useRef({}); // mirror of unreadMap for diffing inside callbacks
+  const unreadPrimedRef = useRef(false); // a list has landed since unreadRef was reset, so growth means a new reply
   const openIdRef = useRef(null);
   const visibleRef = useRef(true);
   const liveRef = useRef("off");
@@ -217,6 +218,7 @@ export function WidgetApp() {
     disposeApi();
     realtimeRef.current?.setToken(null);
     unreadRef.current = {};
+    unreadPrimedRef.current = false;
   }, [clearRetry, disposeApi]);
 
   const resetView = useCallback(() => {
@@ -224,6 +226,7 @@ export function WidgetApp() {
     setRoute(HOME_ROUTE);
     setConvos({ rows: null, failed: false });
     unreadRef.current = {};
+    unreadPrimedRef.current = false;
     setUnreadMap({});
     setThreadTicks({});
     setContent(EMPTY_CONTENT);
@@ -356,6 +359,7 @@ export function WidgetApp() {
   }, []);
 
   // The list carries the authoritative unread counts; a count that grew lights the launcher's "<agent> replied" pill.
+  // Growth after the first list of a session is a reply that just arrived, so it also rings the host's chime; replies already waiting at boot don't.
   const loadConversations = useCallback(async () => {
     const api = apiRef.current;
     if (!api) return;
@@ -366,9 +370,12 @@ export function WidgetApp() {
       const next = unreadFromRows(list, visibleRef.current ? openIdRef.current : null);
       const prev = unreadRef.current;
       const grew = list.find((r) => (next[r.id] || 0) > (prev[r.id] || 0));
+      const arrived = Boolean(grew) && unreadPrimedRef.current;
+      unreadPrimedRef.current = true;
       setConvos({ rows: list, failed: false });
       commitUnread(next);
       if (grew) postToHost("launcher", { unreadReply: true, author: grew.agentName || null });
+      if (arrived) postToHost("chime");
     } catch {
       if (apiRef.current === api) setConvos((c) => (c.rows ? c : { rows: null, failed: true }));
     }
