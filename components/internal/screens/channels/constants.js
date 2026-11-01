@@ -16,25 +16,29 @@ export const CHANNEL_STATUS_MAP = {
   error: { label: "Error", variant: "danger", dotClass: "bg-red-400" },
 };
 
-// Field types: text | textarea | select | switch | color | accounts; `required` gates connect and every later save.
+// Field types: text | textarea | select | switch | color | accounts; `required` gates every save; `section` moves a field into that editor section.
 const ACCOUNT_NETWORKS = [
   { value: "instagram", label: "Instagram" },
   { value: "facebook", label: "Facebook" },
   { value: "x", label: "X" },
 ];
 
-// Blurbs say what is stored, never that messages flow — only Messenger is live (spec §1.1).
+// Blurbs say what really happens (spec §1.1: Messenger is live, Email only sends, the rest store settings); live kinds carry their dialog/switch copy.
 export const CHANNEL_KIND_META = {
   email: {
     label: "Email",
     icon: Mail,
-    blurb: "Settings for your support email addresses. Simulated — no email is received or sent.",
+    blurb: "Support addresses that email your replies to customers. Receiving email isn't available yet.",
+    liveNote: "Teammate and workflow replies on this channel's conversations are emailed to the customer while sending is on. Customer emails aren't received into Comms yet.",
+    connectNote: "Then turn on sending in the channel's Delivery section.",
+    connectedCopy: "Replies are emailed while sending is on.",
+    disconnectedCopy: "Disconnected. Replies on this channel's conversations aren't emailed until you reconnect.",
+    deleteNote: "Replies on its conversations stop being emailed.",
     fields: [
-      { key: "address", label: "Email address", type: "text", placeholder: "support@acme.com", required: true },
-      { key: "forwardingAddress", label: "Forwarding address", type: "text", placeholder: "forward@in.acme.com", hint: "Stored for reference — nothing is forwarded yet." },
-      { key: "replyToName", label: "Reply-to name", type: "text", placeholder: "Acme Support" },
-      { key: "signature", label: "Signature", type: "textarea", placeholder: "— The Acme team" },
-      { key: "verified", label: "Verified", type: "switch", hint: "A manual marker — no ownership check runs." },
+      { key: "address", label: "From address", type: "text", placeholder: "support@acme.com", required: true, hint: "Replies are sent from this address; its domain must be verified in the suite's email service." },
+      { key: "replyToName", label: "From name", type: "text", placeholder: "Acme Support", hint: "The sender name customers see." },
+      { key: "signature", label: "Signature", type: "textarea", placeholder: "— The Acme team", hint: "Added under every reply sent by email." },
+      { key: "sendReplies", label: "Send replies by email", type: "switch", section: "delivery" },
     ],
     summary: (config) => config?.address || "",
   },
@@ -43,6 +47,11 @@ export const CHANNEL_KIND_META = {
     label: "Messenger",
     icon: MessageCircle,
     blurb: "The embedded chat widget for your site or app.",
+    liveNote: "Live — conversations from your installed widget arrive in your inbox.",
+    connectNote: "Generate an install snippet from the channel's Install section.",
+    connectedCopy: "Conversations from your installed widget arrive in your inbox.",
+    disconnectedCopy: "Disconnected. Your installed widget stops loading until you reconnect.",
+    deleteNote: "Its installed widget stops loading on your site.",
     fields: [
       { key: "launcherColor", label: "Launcher colour", type: "color" },
       { key: "greeting", label: "Greeting", type: "text", placeholder: "Hi there 👋 How can we help?" },
@@ -158,7 +167,3 @@ export function formatDate(value) {
 // The §1.1 honesty requirement for every simulated kind.
 export const CONNECT_DISCLOSURE =
   "This stores settings only. It does not connect to the provider, and no messages are received or sent through it.";
-
-// Messenger is the one live kind: conversations arrive through the installed widget.
-export const LIVE_NOTE =
-  "Live — conversations from your installed widget arrive in your inbox.";

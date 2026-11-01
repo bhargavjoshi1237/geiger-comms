@@ -17,6 +17,7 @@ export const OUTBOUND_TYPES = new Set([
   "visitor",
   "userEmailSupplied",
   "launcher",
+  "chime",
   "event",
 ]);
 

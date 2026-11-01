@@ -1,5 +1,5 @@
 // The workflow builder's catalog: triggers, conditions and actions (Intercom's workflow surface), the starter templates, and canvas settings.
-// Trigger keys mirror the comms.workflows trigger check (20261018184859_workflow_builder); action keys are what the engine reads from workflows.actions.
+// Trigger keys mirror the comms.workflows trigger check (20261018184859_workflow_builder); step keys are what lib/automation runs, except those lib/workflows/availability.js marks unavailable.
 
 import {
   AlarmClock,
@@ -265,7 +265,7 @@ export const ACTION_CATALOG = [
         ],
         default: "round_robin",
       },
-      { key: "to", label: "Teammate or team", type: "text", default: "" },
+      { key: "to", label: "Teammate or team (blank = anyone available)", type: "text", default: "" },
     ],
   },
   {

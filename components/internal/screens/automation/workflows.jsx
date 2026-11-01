@@ -39,8 +39,11 @@ import {
   StatusPill,
   Toolbar,
 } from "@/components/internal/shared/screen_kit";
+import { Gated } from "@/components/internal/shared/gated";
+import { Notice } from "@/components/internal/shared/notice";
 import FilterDropdown from "../overview/filter_dropdown";
 import { useOptionalProject } from "@/context/project-context";
+import { useCan } from "@/context/rbac-context";
 import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
 import {
   createWorkflow,
@@ -51,6 +54,8 @@ import {
 import { getUser } from "@/lib/supabase/user";
 
 import {
+  MANAGE_PERMISSION,
+  NEEDS_MANAGE_WORKFLOWS,
   WORKFLOW_STATUS_FILTER_OPTIONS,
   WORKFLOW_STATUS_MAP,
   formatDate,
@@ -134,6 +139,8 @@ function CreateWorkflowDialog({ open, onOpenChange, onCreate }) {
 export function WorkflowsScreen() {
   const { projectId } = useOptionalProject() ?? {};
   const { workflowId, openWorkflow, closeWorkflow, setTab } = useWorkspaceUrl();
+  // Advisory: RLS refuses workflow writes without comms.settings.manage, so the controls say why up front.
+  const canManage = useCan(MANAGE_PERMISSION);
 
   const [workflows, setWorkflows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -341,18 +348,20 @@ export function WorkflowsScreen() {
         <ActionMenu
           label={`Actions for ${w.name}`}
           items={[
-            { icon: Pencil, label: "Edit", onSelect: () => openWorkflow(w.id) },
+            { icon: Pencil, label: canManage ? "Edit" : "View", onSelect: () => openWorkflow(w.id) },
             {
               icon: w.status === "live" ? Pause : Play,
               label: w.status === "live" ? "Pause" : "Set live",
+              disabled: !canManage,
               onSelect: () => void handleToggleStatus(w),
             },
-            { icon: Copy, label: "Duplicate", onSelect: () => void handleDuplicate(w) },
+            { icon: Copy, label: "Duplicate", disabled: !canManage, onSelect: () => void handleDuplicate(w) },
             { separator: true },
             {
               icon: Trash2,
               label: "Delete",
               variant: "destructive",
+              disabled: !canManage,
               onSelect: () => setDeleteTarget(w),
             },
           ]}
@@ -391,6 +400,7 @@ export function WorkflowsScreen() {
     return (
       <WorkflowBuilderScreen
         workflow={selected}
+        readOnly={!canManage}
         onBack={closeWorkflow}
         onUpdate={handleUpdate}
         onDelete={(w) => void handleDelete(w)}
@@ -399,12 +409,15 @@ export function WorkflowsScreen() {
   }
 
   const createButton = (
-    <Button
-      className="bg-primary text-primary-foreground hover:bg-primary/90"
-      onClick={() => setCreateOpen(true)}
-    >
-      <Plus className="h-4 w-4" /> Create workflow
-    </Button>
+    <Gated reason={canManage ? null : NEEDS_MANAGE_WORKFLOWS}>
+      <Button
+        className="bg-primary text-primary-foreground hover:bg-primary/90"
+        disabled={!canManage}
+        onClick={() => setCreateOpen(true)}
+      >
+        <Plus className="h-4 w-4" /> Create workflow
+      </Button>
+    </Gated>
   );
 
   return (
@@ -425,6 +438,10 @@ export function WorkflowsScreen() {
           </>
         }
       />
+
+      {!canManage && !loading ? (
+        <Notice>You can see these workflows. Changing them needs the Manage settings permission.</Notice>
+      ) : null}
 
       <StatsBar stats={stats} />
 

@@ -63,6 +63,7 @@ import {
   Import,
   Lock,
   CreditCard,
+  Cpu,
 } from "lucide-react";
 
 /**
@@ -221,6 +222,7 @@ export const workspaceNav = [
       { title: "Roles & Permissions", icon: ShieldCheck }, // B — custom roles
       { title: "Seats & Licenses", icon: UserPlus }, // D — lite/collaborator seats
       { title: "Custom Fields & Objects", icon: Tags }, // A — the workspace data model
+      { title: "AI Providers", icon: Cpu }, // bring-your-own model providers
       { title: "Business Hours", icon: CalendarClock }, // B — incl. holiday hours
       { title: "Import & Migration", icon: Import }, // B — move off Zendesk/Intercom/Front
       { title: "Sandbox", icon: FlaskConical }, // B

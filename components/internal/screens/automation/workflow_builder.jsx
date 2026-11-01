@@ -1,6 +1,6 @@
 "use client";
 
-// The workflow editor (ported from geiger-events): Builder tab with list + canvas views over the same steps, and a Settings tab.
+// The workflow editor (ported from geiger-events): Builder tab with list + canvas views over the same steps, and a Settings tab; `readOnly` without comms.settings.manage.
 
 import { useState } from "react";
 import { toast } from "sonner";
@@ -24,9 +24,11 @@ import {
 import { MainScreenWrapper } from "@/components/internal/shared/screen_wrappers";
 import { EditorHeader } from "@/components/internal/shared/editor_shell";
 import { EditorSectionHeader, Field, SegmentedTabs } from "@/components/internal/shared/screen_kit";
+import { Gated } from "@/components/internal/shared/gated";
+import { Notice } from "@/components/internal/shared/notice";
 import { cn } from "@/lib/utils";
 
-import { WORKFLOW_STATUS_MAP, formatDateTime } from "./constants";
+import { NEEDS_MANAGE_WORKFLOWS, WORKFLOW_STATUS_MAP, formatDateTime } from "./constants";
 import { catalogEntry, defaultConfig, stepCountLabel } from "./workflow_catalog";
 import { TriggerSelect, WorkflowStepList } from "./step_list";
 import { WorkflowCanvas } from "./canvas/workflow_canvas";
@@ -71,7 +73,7 @@ const stepKey = (s) =>
 const sameSteps = (a = [], b = []) =>
   a.length === b.length && a.every((s, i) => stepKey(s) === stepKey(b[i]));
 
-export function WorkflowBuilderScreen({ workflow, onBack, onUpdate, onDelete }) {
+export function WorkflowBuilderScreen({ workflow, readOnly = false, onBack, onUpdate, onDelete }) {
   const [form, setForm] = useState(workflow);
   const [view, setView] = useState("canvas");
   const [activeTab, setActiveTab] = useState("builder");
@@ -160,6 +162,7 @@ export function WorkflowBuilderScreen({ workflow, onBack, onUpdate, onDelete }) 
   const isLive = form.status === "live";
   const trigger = catalogEntry(form.trigger);
   const activeItem = SETTINGS_ITEMS.find((i) => i.key === activeSetting);
+  const reason = readOnly ? NEEDS_MANAGE_WORKFLOWS : null;
 
   return (
     <MainScreenWrapper>
@@ -173,33 +176,41 @@ export function WorkflowBuilderScreen({ workflow, onBack, onUpdate, onDelete }) 
         }`}
         actions={
           <>
-            <Button
-              variant="outline"
-              className="border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
-              onClick={toggleStatus}
-              disabled={saving}
-            >
-              {isLive ? (
-                <>
-                  <Pause className="h-4 w-4" /> Pause
-                </>
-              ) : (
-                <>
-                  <Play className="h-4 w-4" /> Set live
-                </>
-              )}
-            </Button>
-            <Button
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
-              onClick={save}
-              disabled={saving || !dirty}
-            >
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {saving ? "Saving…" : "Save"}
-            </Button>
+            <Gated reason={reason}>
+              <Button
+                variant="outline"
+                className="border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
+                onClick={toggleStatus}
+                disabled={readOnly || saving}
+              >
+                {isLive ? (
+                  <>
+                    <Pause className="h-4 w-4" /> Pause
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4" /> Set live
+                  </>
+                )}
+              </Button>
+            </Gated>
+            <Gated reason={reason}>
+              <Button
+                className="bg-primary text-primary-foreground hover:bg-primary/90"
+                onClick={save}
+                disabled={readOnly || saving || !dirty}
+              >
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {saving ? "Saving…" : "Save"}
+              </Button>
+            </Gated>
           </>
         }
       />
+
+      {readOnly ? (
+        <Notice>You can see this workflow. Changing it needs the Manage settings permission.</Notice>
+      ) : null}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-6">
         <div className="flex items-center justify-between gap-3">
@@ -214,12 +225,13 @@ export function WorkflowBuilderScreen({ workflow, onBack, onUpdate, onDelete }) 
 
         <TabsContent value="builder" className="mt-2">
           {view === "list" ? (
-            <WorkflowStepList steps={form.steps} onChange={handleStepsChange} />
+            <WorkflowStepList steps={form.steps} onChange={handleStepsChange} readOnly={readOnly} />
           ) : (
             <WorkflowCanvas
               steps={form.steps}
               graph={form.graph}
               active={isLive}
+              readOnly={readOnly}
               onChange={handleCanvasChange}
             />
           )}
@@ -240,6 +252,7 @@ export function WorkflowBuilderScreen({ workflow, onBack, onUpdate, onDelete }) 
                     <Input
                       id="wf-name"
                       value={form.name}
+                      disabled={readOnly}
                       onChange={(e) => patch({ name: e.target.value })}
                     />
                   </Field>
@@ -250,6 +263,7 @@ export function WorkflowBuilderScreen({ workflow, onBack, onUpdate, onDelete }) 
                       onChange={(e) => patch({ description: e.target.value })}
                       placeholder="What does this workflow do?"
                       rows={3}
+                      disabled={readOnly}
                     />
                   </Field>
                 </div>
@@ -261,7 +275,7 @@ export function WorkflowBuilderScreen({ workflow, onBack, onUpdate, onDelete }) 
                     label="Trigger"
                     hint={trigger?.description || "The event that starts this workflow."}
                   >
-                    <TriggerSelect value={form.trigger} onChange={setTriggerType} />
+                    <TriggerSelect value={form.trigger} onChange={setTriggerType} disabled={readOnly} />
                   </Field>
                   <p className="text-xs text-text-tertiary">
                     Trigger options (like which tag or how long to wait) are set on the trigger
@@ -278,13 +292,16 @@ export function WorkflowBuilderScreen({ workflow, onBack, onUpdate, onDelete }) 
                       It stops running immediately. Past runs stay in Run History.
                     </p>
                   </div>
-                  <Button
-                    variant="outline"
-                    className="shrink-0 border-red-500/30 bg-transparent text-red-700 hover:bg-red-500/10 hover:text-red-700 dark:text-red-300 dark:hover:text-red-300"
-                    onClick={() => setDeleteOpen(true)}
-                  >
-                    <Trash2 className="h-4 w-4" /> Delete
-                  </Button>
+                  <Gated reason={reason}>
+                    <Button
+                      variant="outline"
+                      className="shrink-0 border-red-500/30 bg-transparent text-red-700 hover:bg-red-500/10 hover:text-red-700 dark:text-red-300 dark:hover:text-red-300"
+                      disabled={readOnly}
+                      onClick={() => setDeleteOpen(true)}
+                    >
+                      <Trash2 className="h-4 w-4" /> Delete
+                    </Button>
+                  </Gated>
                 </div>
               )}
             </div>

@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 import { DURATION_UNITS, joinMinutes, splitMinutes } from "./constants";
 
 // Multi-select as toggle chips. Nothing selected means "any", which `anyLabel` says out loud.
-export function ChipMultiSelect({ options, value, onChange, anyLabel, ariaLabel }) {
+export function ChipMultiSelect({ options, value, onChange, anyLabel, ariaLabel, disabled }) {
   const selected = Array.isArray(value) ? value : [];
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -30,6 +30,7 @@ export function ChipMultiSelect({ options, value, onChange, anyLabel, ariaLabel 
         spacing={2}
         value={selected}
         onValueChange={onChange}
+        disabled={disabled}
         aria-label={ariaLabel}
         className="flex-wrap"
       >
@@ -51,7 +52,7 @@ export function ChipMultiSelect({ options, value, onChange, anyLabel, ariaLabel 
 }
 
 // Minutes in, minutes out; the unit is local state so it survives an empty amount. Empty amount → null.
-export function DurationField({ id, value, onChange, placeholder = "—" }) {
+export function DurationField({ id, value, onChange, placeholder = "—", disabled }) {
   const [unit, setUnit] = useState(() => splitMinutes(value).unit);
   const factor = DURATION_UNITS.find((u) => u.value === unit)?.factor ?? 1;
   const n = Number(value);
@@ -65,11 +66,13 @@ export function DurationField({ id, value, onChange, placeholder = "—" }) {
         inputMode="numeric"
         value={amount}
         placeholder={placeholder}
+        disabled={disabled}
         onChange={(e) => onChange(joinMinutes(e.target.value, unit))}
         className="w-24"
       />
       <Select
         value={unit}
+        disabled={disabled}
         onValueChange={(next) => {
           setUnit(next);
           onChange(joinMinutes(amount, next));

@@ -3,13 +3,23 @@
 
 import { CONVERSATION_CHANNELS } from "../overview/constants";
 
+// ---- permissions ------------------------------------------------------------------
+
+// Writes to workflows, routing rules, SLA policies and shared macros need this (20261021114846_automation_write_hardening).
+export const MANAGE_PERMISSION = "comms.settings.manage";
+
+export const NEEDS_MANAGE_WORKFLOWS = "Only teammates who can manage settings can change workflows.";
+export const NEEDS_MANAGE_ROUTING = "Only teammates who can manage settings can change routing rules.";
+export const NEEDS_MANAGE_SLA = "Only teammates who can manage settings can change SLA policies.";
+export const NEEDS_MANAGE_MACROS = "Only teammates who can manage settings can share macros or change shared ones.";
+
 // ---- workflows ------------------------------------------------------------------
 
 export const WORKFLOW_STATUS_MAP = {
   live: { label: "Live", variant: "success", dotClass: "bg-emerald-400" },
   paused: { label: "Paused", variant: "warning", dotClass: "bg-amber-400" },
-  draft: { label: "Draft", variant: "neutral", dotClass: "bg-[#737373]" },
-  archived: { label: "Archived", variant: "outline", dotClass: "bg-[#525252]" },
+  draft: { label: "Draft", variant: "neutral", dotClass: "bg-text-secondary" },
+  archived: { label: "Archived", variant: "outline", dotClass: "bg-text-tertiary" },
 };
 
 export const WORKFLOW_STATUS_FILTER_OPTIONS = [
@@ -42,7 +52,7 @@ export const RUN_STATUS_MAP = {
   skipped: {
     label: "Skipped",
     variant: "neutral",
-    dotClass: "bg-[#737373]",
+    dotClass: "bg-text-secondary",
     iconClass: "text-[#737373]",
   },
 };
@@ -88,7 +98,7 @@ export function summarizeMatch(match) {
 
 export const MACRO_SCOPE_MAP = {
   team: { label: "Everyone", variant: "info", dotClass: "bg-sky-400" },
-  personal: { label: "Only me", variant: "neutral", dotClass: "bg-[#737373]" },
+  personal: { label: "Only me", variant: "neutral", dotClass: "bg-text-secondary" },
 };
 
 export const MACRO_SCOPE_FILTER_OPTIONS = [
@@ -152,8 +162,8 @@ export const ROUTING_STRATEGY_MAP = {
   direct: {
     label: "Direct",
     variant: "neutral",
-    dotClass: "bg-[#737373]",
-    description: "Always assign to one teammate (skipped while they're away outside hours).",
+    dotClass: "bg-text-secondary",
+    description: "Always assign to one teammate (skipped while they're offline, or away outside their hours).",
   },
 };
 
@@ -164,7 +174,7 @@ export const ROUTING_STRATEGY_FILTER_OPTIONS = [
 
 export const ENABLED_MAP = {
   on: { label: "Enabled", variant: "success", dotClass: "bg-emerald-400" },
-  off: { label: "Disabled", variant: "neutral", dotClass: "bg-[#737373]" },
+  off: { label: "Disabled", variant: "neutral", dotClass: "bg-text-secondary" },
 };
 
 export const ENABLED_FILTER_OPTIONS = [
@@ -176,7 +186,7 @@ export const ENABLED_FILTER_OPTIONS = [
 export const AVAILABILITY_MAP = {
   available: { label: "Available", variant: "success", dotClass: "bg-emerald-400" },
   away: { label: "Away", variant: "warning", dotClass: "bg-amber-400" },
-  offline: { label: "Offline", variant: "neutral", dotClass: "bg-[#737373]" },
+  offline: { label: "Offline", variant: "neutral", dotClass: "bg-text-secondary" },
 };
 
 // ---- SLA policies -----------------------------------------------------------------
@@ -186,8 +196,8 @@ export const SLA_STATE_MAP = {
   on_track: { label: "On track", variant: "success", dotClass: "bg-emerald-400" },
   approaching: { label: "Approaching", variant: "warning", dotClass: "bg-amber-400" },
   breached: { label: "Breached", variant: "danger", dotClass: "bg-red-400" },
-  paused: { label: "Paused", variant: "neutral", dotClass: "bg-[#737373]" },
-  none: { label: "No SLA", variant: "outline", dotClass: "bg-[#525252]" },
+  paused: { label: "Paused", variant: "neutral", dotClass: "bg-text-secondary" },
+  none: { label: "No SLA", variant: "outline", dotClass: "bg-text-tertiary" },
 };
 
 // ---- durations -------------------------------------------------------------------

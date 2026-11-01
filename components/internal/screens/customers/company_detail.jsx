@@ -1,24 +1,21 @@
 "use client";
 
-// The company editor: account header, section nav, and bodies for the people,
-// threads and tickets rolled up under one account. A company is a lens over
-// the people directory, so there are no direct writes here beyond navigation.
+// The company editor (?company=<id>): inline-editable account record, linked people, and their rolled-up threads and tickets.
 
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import {
   Building2,
   History,
   IdCard,
   MessagesSquare,
+  SlidersHorizontal,
   Ticket as TicketIcon,
+  Trash2,
   Users,
 } from "lucide-react";
 import { EditorShell } from "@/components/internal/shared/editor_shell";
-import {
-  Avatar,
-  AvatarFallback,
-  Button,
-} from "@geiger/ui";
+import { Avatar, AvatarFallback, AvatarImage, Button } from "@geiger/ui";
 import {
   DataTable,
   EmptyState,
@@ -26,18 +23,25 @@ import {
   SettingRow,
   SettingsList,
   StatGrid,
+  StatusPill,
 } from "@/components/internal/shared/screen_kit";
 import { useWorkspaceUrl } from "@/lib/hooks/use-workspace-url";
+import { normalizeDomain } from "@/lib/supabase/companies";
 import {
   LIFECYCLE_MAP,
   buildTimeline,
   channelIcon,
+  coerceAttribute,
   formatDate,
   formatRelativeTime,
   initialsOf,
 } from "./constants";
-import { TimelineDot } from "./person_sections";
-import { StatusPill } from "@/components/internal/shared/screen_kit";
+import {
+  AttributeControl,
+  CommitInput,
+  NewAttributeForm,
+  TimelineDot,
+} from "./person_sections";
 
 const NAV = [
   {
@@ -47,19 +51,20 @@ const NAV = [
         key: "overview",
         label: "Overview",
         icon: IdCard,
-        desc: "The account at a glance — ownership, people and recent activity.",
+        desc: "The account at a glance — record, people and recent activity.",
+      },
+      {
+        key: "attributes",
+        label: "Attributes",
+        icon: SlidersHorizontal,
+        desc: "Custom attributes on this company record.",
       },
     ],
   },
   {
     group: "Directory",
     items: [
-      {
-        key: "people",
-        label: "People",
-        icon: Users,
-        desc: "Everyone at this company.",
-      },
+      { key: "people", label: "People", icon: Users, desc: "Everyone linked to this company." },
       {
         key: "conversations",
         label: "Conversations",
@@ -87,50 +92,79 @@ const NAV = [
   },
 ];
 
+// Standard account fields: [key, label, placeholder, kind].
+const ACCOUNT_FIELDS = [
+  ["name", "Name", "Acme Inc", "text"],
+  ["domain", "Domain", "acme.com", "domain"],
+  ["externalId", "Company ID", "Your system's ID", "text"],
+  ["website", "Website", "https://acme.com", "text"],
+  ["industry", "Industry", "Software", "text"],
+  ["size", "Company size", "Employees", "number"],
+  ["plan", "Plan", "Pro", "text"],
+  ["monthlySpend", "Monthly spend", "0", "number"],
+  ["owner", "Owner", "Teammate", "text"],
+];
+
 export function CompanyDetailScreen({
   company,
-  conversationsOf,
-  ticketsOf,
+  attributes,
+  onAttributeCreated,
   onBack,
+  onUpdate,
   onDelete,
 }) {
   const [active, setActive] = useState("overview");
-  const { openPerson, openConversationInTab, openTicket } = useWorkspaceUrl();
-
-  const companyConvos = useMemo(() => {
-    const seen = new Set();
-    return (company.people || []).flatMap((p) =>
-      (conversationsOf(p) || []).filter((c) =>
-        seen.has(c.id) ? false : (seen.add(c.id), true),
-      ),
-    );
-  }, [company, conversationsOf]);
-
-  const companyTickets = useMemo(() => {
-    const seen = new Set();
-    return (company.people || []).flatMap((p) =>
-      (ticketsOf(p, conversationsOf(p)) || []).filter((t) =>
-        seen.has(t.id) ? false : (seen.add(t.id), true),
-      ),
-    );
-  }, [company, conversationsOf, ticketsOf]);
+  const { openPersonInTab, openConversationInTab, openTicketInTab } = useWorkspaceUrl();
 
   const timeline = useMemo(() => {
     const events = (company.people || []).flatMap((p) =>
-      buildTimeline({
-        person: p,
-        conversations: conversationsOf(p),
-        tickets: ticketsOf(p, conversationsOf(p)),
-      }),
+      buildTimeline({ person: p }).filter((e) => e.kind !== "conversation" && e.kind !== "tag"),
+    );
+    events.push(
+      ...buildTimeline({ conversations: company.conversations, tickets: company.tickets }).filter(
+        (e) => e.kind !== "person",
+      ),
     );
     return events.sort((a, b) => new Date(b.at) - new Date(a.at));
-  }, [company, conversationsOf, ticketsOf]);
+  }, [company]);
 
-  if (!company) return null;
+  const defs = (attributes || []).filter((a) => a.entity === "company");
+  const openPerson = (id) => openPersonInTab(id, "People");
 
-  const open = companyConvos.filter(
-    (c) => (c.status || "").toLowerCase() !== "closed",
-  ).length;
+  function commitField(key, kind, raw) {
+    if (key === "name" && !raw.trim()) {
+      toast.error("A company needs a name.");
+      return;
+    }
+    if (kind === "number" && raw.trim() !== "" && coerceAttribute("number", raw) === undefined) {
+      toast.error(`“${raw}” isn't a number.`);
+      return;
+    }
+    onUpdate({ [key]: kind === "domain" ? normalizeDomain(raw) : raw });
+  }
+
+  const handleCustom = (key, value) => {
+    const next = { ...(company.custom || {}) };
+    if (value === null || value === undefined) delete next[key];
+    else next[key] = value;
+    onUpdate({ custom: next });
+  };
+
+  const peopleTable = (rows) =>
+    rows.length ? (
+      <DataTable
+        columns={peopleColumns}
+        data={rows}
+        getRowKey={(row) => row.id}
+        onRowClick={(row) => openPerson(row.id)}
+      />
+    ) : (
+      <EmptyState
+        icon={Users}
+        title="Nobody linked yet"
+        description="Link people from their record in People, or import them with a company name."
+      />
+    );
 
   return (
     <EditorShell
@@ -146,12 +180,10 @@ export function CompanyDetailScreen({
         </span>
       }
       meta={[
-        company.website,
-        `${company.contactCount} contact${company.contactCount === 1 ? "" : "s"}`,
+        company.domain || company.website,
+        `${company.contactCount} ${company.contactCount === 1 ? "person" : "people"}`,
         company.owner ? `Owned by ${company.owner}` : "No owner",
-        company.lastActivityAt
-          ? `Active ${formatRelativeTime(company.lastActivityAt)}`
-          : null,
+        company.lastActivityAt ? `Active ${formatRelativeTime(company.lastActivityAt)}` : null,
       ]
         .filter(Boolean)
         .join(" · ")}
@@ -161,7 +193,7 @@ export function CompanyDetailScreen({
           className="border-border bg-transparent text-muted-foreground hover:bg-surface-active hover:text-foreground"
           onClick={() => onDelete?.(company)}
         >
-          Delete
+          <Trash2 className="h-4 w-4" /> Delete
         </Button>
       }
       nav={NAV}
@@ -173,54 +205,54 @@ export function CompanyDetailScreen({
         <div className="space-y-6">
           <StatGrid
             stats={[
-              { label: "Contacts", value: String(company.contactCount) },
-              { label: "Conversations", value: String(companyConvos.length) },
-              { label: "Open", value: String(open) },
-              { label: "Tickets", value: String(companyTickets.length) },
+              { label: "People", value: String(company.contactCount) },
+              { label: "Conversations", value: String(company.conversationCount) },
+              { label: "Open", value: String(company.openCount) },
+              { label: "Tickets", value: String(company.tickets.length) },
             ]}
           />
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_320px]">
             <div className="min-w-0 space-y-6">
-              <SectionCard title="Account">
+              <SectionCard title="Account" description="Saved as you leave each field.">
                 <SettingsList>
-                  <SettingRow title="Domain" description={company.domain || "—"} />
-                  <SettingRow title="Website" description={company.website || "—"} />
-                  <SettingRow
-                    title="Owner"
-                    description={company.owner || "Unassigned"}
-                  />
-                  <SettingRow
-                    title="First seen"
-                    description={formatDate(company.createdAt)}
-                  />
+                  {ACCOUNT_FIELDS.map(([key, label, placeholder, kind]) => (
+                    <SettingRow
+                      key={key}
+                      title={label}
+                      control={
+                        <CommitInput
+                          value={company[key] === null || company[key] === undefined ? "" : String(company[key])}
+                          onCommit={(v) => commitField(key, kind, v)}
+                          placeholder={placeholder}
+                          inputMode={kind === "number" ? "decimal" : undefined}
+                          className="h-8 w-52 text-xs"
+                          aria-label={label}
+                        />
+                      }
+                    />
+                  ))}
+                  <SettingRow title="Created" description={formatDate(company.createdAt)} control={null} />
                 </SettingsList>
               </SectionCard>
               <SectionCard
                 title={`People (${company.people.length})`}
-                description="Everyone carrying this company name."
+                description="Everyone linked to this company."
                 action={
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="text-muted-foreground hover:text-foreground"
-                    onClick={() => setActive("people")}
-                  >
-                    View all
-                  </Button>
+                  company.people.length > 5 ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-muted-foreground hover:text-foreground"
+                      onClick={() => setActive("people")}
+                    >
+                      View all
+                    </Button>
+                  ) : null
                 }
-                bodyPadding={company.people.length > 0}
+                bodyPadding={company.people.length === 0}
               >
-                {company.people.length ? (
-                  <DataTable
-                    columns={peopleColumns(openPerson)}
-                    data={company.people.slice(0, 5)}
-                    getRowKey={(row) => row.id}
-                    onRowClick={(row) => openPerson(row.id)}
-                  />
-                ) : (
-                  <EmptyState icon={Users} title="Nobody here yet" description="" />
-                )}
+                {peopleTable(company.people.slice(0, 5))}
               </SectionCard>
             </div>
             <div className="min-w-0">
@@ -241,7 +273,7 @@ export function CompanyDetailScreen({
                 {timeline.length ? (
                   <ol className="relative space-y-5 border-l border-border pl-5">
                     {timeline.slice(0, 6).map((e) => (
-                      <TimelineDot key={`${company.id}-${e.id}`} event={e} compact />
+                      <TimelineDot key={e.id} event={e} compact />
                     ))}
                   </ol>
                 ) : (
@@ -257,30 +289,61 @@ export function CompanyDetailScreen({
         </div>
       ) : null}
 
+      {active === "attributes" ? (
+        <SectionCard
+          title="Custom attributes"
+          description="Workspace-defined fields on every company."
+        >
+          {defs.length ? (
+            <div className="mb-4">
+              <SettingsList>
+                {defs.map((a) => (
+                  <SettingRow
+                    key={a.id}
+                    title={a.label}
+                    description={a.key}
+                    control={
+                      <AttributeControl
+                        attribute={a}
+                        value={company.custom?.[a.key]}
+                        onChange={(v) => handleCustom(a.key, v)}
+                      />
+                    }
+                  />
+                ))}
+              </SettingsList>
+            </div>
+          ) : (
+            <EmptyState
+              icon={SlidersHorizontal}
+              title="No custom attributes"
+              description="Define the first one below; it appears on every company."
+            />
+          )}
+          <NewAttributeForm
+            projectId={company.projectId}
+            entity="company"
+            position={defs.length}
+            onCreated={onAttributeCreated}
+          />
+        </SectionCard>
+      ) : null}
+
       {active === "people" ? (
         <SectionCard
           title={`People (${company.people.length})`}
-          bodyPadding={company.people.length > 0}
+          bodyPadding={company.people.length === 0}
         >
-          {company.people.length ? (
-            <DataTable
-              columns={peopleColumns(openPerson)}
-              data={company.people}
-              getRowKey={(row) => row.id}
-              onRowClick={(row) => openPerson(row.id)}
-            />
-          ) : (
-            <EmptyState icon={Users} title="Nobody here yet" description="" />
-          )}
+          {peopleTable(company.people)}
         </SectionCard>
       ) : null}
 
       {active === "conversations" ? (
         <SectionCard
-          title={`Conversations (${companyConvos.length})`}
-          bodyPadding={companyConvos.length > 0}
+          title={`Conversations (${company.conversations.length})`}
+          bodyPadding={company.conversations.length === 0}
         >
-          {companyConvos.length ? (
+          {company.conversations.length ? (
             <DataTable
               columns={[
                 {
@@ -320,7 +383,7 @@ export function CompanyDetailScreen({
                   ),
                 },
               ]}
-              data={[...companyConvos].sort(
+              data={[...company.conversations].sort(
                 (a, b) =>
                   new Date(b.lastMessageAt || b.createdAt) -
                   new Date(a.lastMessageAt || a.createdAt),
@@ -340,10 +403,10 @@ export function CompanyDetailScreen({
 
       {active === "tickets" ? (
         <SectionCard
-          title={`Tickets (${companyTickets.length})`}
-          bodyPadding={companyTickets.length > 0}
+          title={`Tickets (${company.tickets.length})`}
+          bodyPadding={company.tickets.length === 0}
         >
-          {companyTickets.length ? (
+          {company.tickets.length ? (
             <DataTable
               columns={[
                 {
@@ -372,9 +435,9 @@ export function CompanyDetailScreen({
                   ),
                 },
               ]}
-              data={companyTickets}
+              data={company.tickets}
               getRowKey={(row) => row.id}
-              onRowClick={(row) => openTicket(row.id)}
+              onRowClick={(row) => openTicketInTab(row.id, "Tickets")}
             />
           ) : (
             <EmptyState
@@ -394,7 +457,7 @@ export function CompanyDetailScreen({
           {timeline.length ? (
             <ol className="relative space-y-6 border-l border-border pl-6">
               {timeline.map((e) => (
-                <TimelineDot key={`${company.id}-${e.id}`} event={e} />
+                <TimelineDot key={e.id} event={e} />
               ))}
             </ol>
           ) : (
@@ -410,43 +473,39 @@ export function CompanyDetailScreen({
   );
 }
 
-function peopleColumns(openPerson) {
-  return [
-    {
-      key: "person",
-      header: "Person",
-      render: (row) => (
-        <div className="flex min-w-0 items-center gap-2.5">
-          <Avatar className="h-8 w-8 shrink-0">
-            {row.avatarUrl ? null : null}
-            <AvatarFallback className="bg-surface-card text-xs text-text-secondary">
-              {initialsOf(row.name, row.email)}
-            </AvatarFallback>
-          </Avatar>
-          <div className="min-w-0">
-            <p className="truncate font-medium text-foreground">{row.name}</p>
-            <p className="truncate text-xs text-text-secondary">{row.email}</p>
-          </div>
+const peopleColumns = [
+  {
+    key: "person",
+    header: "Person",
+    render: (row) => (
+      <div className="flex min-w-0 items-center gap-2.5">
+        <Avatar className="h-8 w-8 shrink-0">
+          {row.avatarUrl ? <AvatarImage src={row.avatarUrl} alt={row.name} /> : null}
+          <AvatarFallback className="bg-surface-card text-xs text-text-secondary">
+            {initialsOf(row.name, row.email)}
+          </AvatarFallback>
+        </Avatar>
+        <div className="min-w-0">
+          <p className="truncate font-medium text-foreground">{row.name}</p>
+          <p className="truncate text-xs text-text-secondary">{row.email}</p>
         </div>
-      ),
-    },
-    {
-      key: "lifecycle",
-      header: "Lifecycle",
-      render: (row) => (
-        <StatusPill status={row.lifecycle || "lead"} map={LIFECYCLE_MAP} />
-      ),
-    },
-    {
-      key: "seen",
-      header: "Last seen",
-      render: (row) => (
-        <span className="whitespace-nowrap text-sm text-text-secondary">
-          {formatRelativeTime(row.updatedAt)}
-        </span>
-      ),
-    },
-  ];
-}
+      </div>
+    ),
+  },
+  {
+    key: "lifecycle",
+    header: "Lifecycle",
+    render: (row) => <StatusPill status={row.lifecycle || "lead"} map={LIFECYCLE_MAP} />,
+  },
+  {
+    key: "seen",
+    header: "Last seen",
+    render: (row) => (
+      <span className="whitespace-nowrap text-sm text-text-secondary">
+        {formatRelativeTime(row.updatedAt)}
+      </span>
+    ),
+  },
+];
 
 export default CompanyDetailScreen;

@@ -21,7 +21,8 @@ import {
   Textarea,
 } from "@geiger/ui";
 import { Field } from "@/components/internal/shared/screen_kit";
-import { MACRO_SCOPE_MAP, MACRO_VARIABLES } from "./constants";
+import { Notice } from "@/components/internal/shared/notice";
+import { MACRO_SCOPE_MAP, MACRO_VARIABLES, NEEDS_MANAGE_MACROS } from "./constants";
 
 export const MACRO_SCOPE_OPTIONS = [
   { value: "team", label: MACRO_SCOPE_MAP.team.label, hint: "Every teammate in this workspace can use it." },
@@ -29,7 +30,7 @@ export const MACRO_SCOPE_OPTIONS = [
 ];
 
 // Reply textarea with chips that drop a {{token}} at the cursor (or replace the selection).
-export function MacroBodyField({ id, value, onChange, rows = 6, placeholder }) {
+export function MacroBodyField({ id, value, onChange, rows = 6, placeholder, disabled }) {
   const ref = useRef(null);
 
   function insert(token) {
@@ -56,6 +57,7 @@ export function MacroBodyField({ id, value, onChange, rows = 6, placeholder }) {
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder ?? "Hi {{contact.name}} — thanks for reaching out…"}
         rows={rows}
+        disabled={disabled}
       />
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="mr-1 text-xs text-text-tertiary">Insert</span>
@@ -63,8 +65,9 @@ export function MacroBodyField({ id, value, onChange, rows = 6, placeholder }) {
           <button
             key={v.token}
             type="button"
+            disabled={disabled}
             onClick={() => insert(v.token)}
-            className="rounded-md border border-border bg-surface-card px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground"
+            className="rounded-md border border-border bg-surface-card px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
           >
             {v.label}
           </button>
@@ -74,15 +77,17 @@ export function MacroBodyField({ id, value, onChange, rows = 6, placeholder }) {
   );
 }
 
-export function MacroDialog({ open, onCancel, onCreate }) {
+// Without `canShare` (comms.settings.manage) a new macro can only be private to its creator.
+export function MacroDialog({ open, canShare = true, onCancel, onCreate }) {
   const [name, setName] = useState("");
-  const [scope, setScope] = useState("team");
+  const [picked, setPicked] = useState("team");
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
+  const scope = canShare ? picked : "personal";
 
   function reset() {
     setName("");
-    setScope("team");
+    setPicked("team");
     setBody("");
   }
 
@@ -120,6 +125,7 @@ export function MacroDialog({ open, onCancel, onCreate }) {
             void submit();
           }}
         >
+          {canShare ? null : <Notice>New macros are private to you. {NEEDS_MANAGE_MACROS}</Notice>}
           <div className="grid gap-4 sm:grid-cols-[1fr_180px]">
             <Field label="Name" htmlFor="macro-dialog-name">
               <Input
@@ -131,13 +137,13 @@ export function MacroDialog({ open, onCancel, onCreate }) {
               />
             </Field>
             <Field label="Available to" htmlFor="macro-dialog-scope">
-              <Select value={scope} onValueChange={setScope}>
+              <Select value={scope} onValueChange={setPicked}>
                 <SelectTrigger id="macro-dialog-scope">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {MACRO_SCOPE_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>
+                    <SelectItem key={o.value} value={o.value} disabled={o.value === "team" && !canShare}>
                       {o.label}
                     </SelectItem>
                   ))}

@@ -1,12 +1,13 @@
 "use client";
 
-// Channel editor nav + section bodies (spec §5.1); Messenger-only sections hide through showIf.
+// Channel editor nav + section bodies (spec §5.1); Messenger- and Email-only sections hide through showIf.
 
 import {
   Code,
   Eye,
   LayoutDashboard,
   Radio,
+  Send,
   ShieldAlert,
   SlidersHorizontal,
   Trash2,
@@ -23,16 +24,22 @@ import {
 import {
   CHANNEL_STATUS_MAP,
   CONNECT_DISCLOSURE,
-  LIVE_NOTE,
   formatDate,
   isSimulated,
 } from "./constants";
 import { ChannelConfigForm } from "./channel_config_form";
+import {
+  EmailDeliveryBadge,
+  EmailDeliverySection,
+  deliverySummary,
+  useEmailStatus,
+} from "./email_delivery";
 import { InstallSection } from "./install_section";
 import { MessengerPreview } from "./messenger_preview";
 import { SimulatedBadge } from "./simulated_badge";
 
 const isMessenger = (channel) => channel?.kind === "messenger";
+const isEmail = (channel) => channel?.kind === "email";
 
 export const NAV_GROUPS = [
   {
@@ -63,6 +70,13 @@ export const NAV_GROUPS = [
         showIf: isMessenger,
         ownHeader: true,
       },
+      {
+        key: "delivery",
+        label: "Delivery",
+        icon: Send,
+        desc: "Whether replies are emailed, a real test send, and what Comms can't do with email yet.",
+        showIf: isEmail,
+      },
     ],
   },
   {
@@ -90,8 +104,42 @@ export const NAV_GROUPS = [
   },
 ];
 
+// The connection row: simulated kinds say so, Email reports what delivery can do right now, Messenger is simply live.
+function ConnectionRow({ channel, meta }) {
+  const email = useEmailStatus(isEmail(channel) ? channel.projectId : null);
+  if (isSimulated(channel)) {
+    return (
+      <SettingRow
+        title="Simulated connection"
+        description={CONNECT_DISCLOSURE}
+        control={<SimulatedBadge channel={channel} />}
+      />
+    );
+  }
+  if (isEmail(channel)) {
+    return (
+      <SettingRow
+        title="Email delivery"
+        description={email.loading ? "Checking email delivery…" : deliverySummary(channel, email.status)}
+        control={email.loading ? null : <EmailDeliveryBadge channel={channel} status={email.status} />}
+      />
+    );
+  }
+  return (
+    <SettingRow
+      title="Live connection"
+      description={meta.liveNote}
+      control={
+        <Badge variant="success">
+          <Radio aria-hidden="true" />
+          Live
+        </Badge>
+      }
+    />
+  );
+}
+
 function OverviewSection({ channel, meta, conversationCount }) {
-  const simulated = isSimulated(channel);
   const stats = [
     { label: "Conversations", value: String(conversationCount ?? 0), hint: "Linked to this channel" },
     { label: "Status", value: CHANNEL_STATUS_MAP[channel.status]?.label || channel.status },
@@ -109,20 +157,7 @@ function OverviewSection({ channel, meta, conversationCount }) {
             description={meta.summary(channel) || "Nothing configured yet"}
             control={<StatusPill status={channel.status} map={CHANNEL_STATUS_MAP} />}
           />
-          <SettingRow
-            title={simulated ? "Simulated connection" : "Live connection"}
-            description={simulated ? CONNECT_DISCLOSURE : LIVE_NOTE}
-            control={
-              simulated ? (
-                <SimulatedBadge channel={channel} />
-              ) : (
-                <Badge variant="success">
-                  <Radio aria-hidden="true" />
-                  Live
-                </Badge>
-              )
-            }
-          />
+          <ConnectionRow channel={channel} meta={meta} />
         </SettingsList>
       </SectionCard>
     </div>
@@ -184,14 +219,12 @@ function InstallSectionBody({ channel }) {
   return <InstallSection channel={channel} />;
 }
 
-// Status copy per (simulated, connected): simulated rows never claim traffic; a disconnected Messenger stops its widget.
-function connectionCopy(simulated, connected) {
-  if (simulated) {
+// Status copy: simulated rows never claim traffic; a live kind says what disconnecting stops.
+function connectionCopy(channel, meta, connected) {
+  if (isSimulated(channel)) {
     return `Marked as ${connected ? "connected" : "disconnected"} for your records. Simulated — nothing is received from or sent to the provider.`;
   }
-  return connected
-    ? "Conversations from your installed widget arrive in your inbox."
-    : "Disconnected. Your installed widget stops loading until you reconnect.";
+  return connected ? meta.connectedCopy : meta.disconnectedCopy;
 }
 
 function AdvancedSection({ channel, meta, onStatus, onDelete }) {
@@ -202,7 +235,7 @@ function AdvancedSection({ channel, meta, onStatus, onDelete }) {
         <SettingsList>
           <SettingRow
             title="Connected"
-            description={connectionCopy(isSimulated(channel), connected)}
+            description={connectionCopy(channel, meta, connected)}
             checked={connected}
             onCheckedChange={(next) => onStatus(next ? "connected" : "disconnected")}
           />
@@ -225,6 +258,7 @@ export const SECTIONS = {
   overview: OverviewSection,
   configuration: ConfigurationSection,
   install: InstallSectionBody,
+  delivery: EmailDeliverySection,
   preview: PreviewSection,
   advanced: AdvancedSection,
 };

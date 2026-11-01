@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Check, Copy, EyeOff, Globe, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input } from "@geiger/ui";
+import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, LogoLoading } from "@geiger/ui";
 import { Field, SectionCard } from "@/components/internal/shared/screen_kit";
 import { apiPath, widgetInstallSnippet, widgetLoaderUrl } from "@/lib/widget/embed";
 
@@ -147,7 +147,9 @@ export function InstallSection({ channel }) {
       }
     >
       {loading ? (
-        <p className="py-6 text-center text-sm text-muted-foreground">Loading…</p>
+        <div className="flex items-center justify-center py-6">
+          <LogoLoading size={40} aria-label="Loading widget apps" />
+        </div>
       ) : apps.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">
           No widget apps yet. Create one to get an install snippet.

@@ -401,7 +401,12 @@ Responsibilities, and nothing else:
 4. Create the iframe lazily — **on first open, not on page load** — with
    `title`, `allow="clipboard-write"`, and `sandbox="allow-scripts allow-same-origin allow-forms allow-popups"`.
 5. Own the postMessage bridge (§8).
-6. Never touch the host page's DOM outside its own container, never define
+6. Play the reply chime (Mallet: D5 then G5 on a wooden bar, synthesized with Web
+   Audio) when the widget sends `chime`, at most once every 3 s. It plays in the
+   host page because the click that opened the launcher already unlocked audio
+   there; a cross-origin iframe would need `allow="autoplay"` and its own gesture.
+   `boot({ options: { sound: false } })` turns it off.
+7. Never touch the host page's DOM outside its own container, never define
    globals other than `GeigerComms`, never ship a CSS reset.
 
 Loading the iframe lazily matters: the widget must cost the host page a launcher
@@ -430,7 +435,9 @@ Rules, all mandatory:
 Message types — host → widget: `boot`, `update`, `show`, `hide`, `showSpace`,
 `showArticle`, `showNews`, `showConversation`, `showNewMessage`, `shutdown`.
 Widget → host: `ready`, `resize`, `unreadCount`, `open`, `close`,
-`userEmailSupplied`.
+`userEmailSupplied`, `chime`. The widget sends `chime` when an unread count grows
+after the session's first conversation list, which means a reply just arrived.
+Replies already waiting at boot, and replies in the thread on screen, don't send it.
 
 ---
 

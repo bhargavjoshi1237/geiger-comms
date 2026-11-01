@@ -4,14 +4,24 @@
 // Submits a lead through the session-authenticated API and tells the host the visitor supplied their email (spec §8).
 
 import { useState } from "react";
-import { BrandLogo, Clock, Sparkles, X } from "./widget_primitives";
+import {
+  AiBadge,
+  BookOpen,
+  BrandLogo,
+  Check,
+  ChevronRight,
+  CloseButton,
+  Mail,
+  Moon,
+  Sparkles,
+} from "./widget_primitives";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function OfflineMessageView({ getApi, config, contact, onAsk, onClose, onEmailSupplied }) {
+export function OfflineMessageView({ getApi, config, contact, onAsk, onHelp, onClose, onEmailSupplied }) {
   const brand = config?.name || "Support";
   const assistant = config?.assistantName || "";
-  const backAt = config?.backAt || config?.officeHoursNote || "";
+  const backAt = config?.backAt || "";
   const [email, setEmail] = useState(contact?.email || "");
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
@@ -45,64 +55,75 @@ export function OfflineMessageView({ getApi, config, contact, onAsk, onClose, on
 
   return (
     <>
-      <header className="gc-offlinehead">
-        <div className="gc-header__row">
-          <div className="gc-header__brand">
-            <BrandLogo name={brand} logoUrl={config?.logoUrl} style={{ width: 22, height: 22, fontSize: 10 }} />
-            <span className="gc-header__brandname" style={{ fontSize: 12.5 }}>
-              {brand}
-            </span>
-          </div>
-          <button
-            type="button"
-            className="gc-iconbtn gc-iconbtn--sm"
-            onClick={onClose}
-            aria-label="Close messenger"
-          >
-            <X />
-          </button>
+      <header className="gc-hero gc-hero--away">
+        <div className="gc-hero__bar">
+          <BrandLogo name={brand} logoUrl={config?.logoUrl} />
+          <span className="gc-hero__brand">{brand}</span>
+          <CloseButton onClose={onClose} />
+        </div>
+        <div className="gc-hero__lede">
+          <h1>We&rsquo;re away right now.</h1>
+          <p>
+            Leave a message and we&rsquo;ll email you the reply.
+            {config?.officeHoursNote ? ` ${config.officeHoursNote}` : ""}
+          </p>
         </div>
         <div className="gc-awaybar">
-          <Clock />
-          <span>
-            The team is away{backAt ? <> — back at <strong>{backAt}</strong></> : null}.
-          </span>
+          <Moon />
+          <span className="gc-awaybar__text">The team is away</span>
+          {backAt ? <span className="gc-awaybar__when">Back {backAt}</span> : null}
         </div>
       </header>
 
-      <div className="gc-offline">
+      <div className="gc-away">
         {assistant && onAsk ? (
-          <>
-            <div className="gc-offercard">
-              <Sparkles size={15} className="gc-offercard__icon" />
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <p className="gc-offercard__title">{assistant} can help now</p>
-                <p className="gc-offercard__desc">
-                  {assistant} is our AI assistant. It can answer most questions now and pass anything else to the team.
-                </p>
-                <button type="button" className="gc-primarybtn" onClick={onAsk}>
-                  Ask {assistant} now
-                </button>
-              </div>
-            </div>
-
-            <div className="gc-rule">
-              <span className="gc-rule__label">OR LEAVE A MESSAGE</span>
-            </div>
-          </>
+          <button type="button" className="gc-linkcard" onClick={onAsk}>
+            <span className="gc-linkcard__tile" aria-hidden="true">
+              <Sparkles size={16} />
+            </span>
+            <span className="gc-linkcard__text">
+              <span className="gc-linkcard__title">
+                {assistant} can help now
+                <AiBadge />
+              </span>
+              <span className="gc-linkcard__sub">Our AI assistant answers most questions and passes the rest on.</span>
+            </span>
+            <ChevronRight className="gc-linkcard__chev" />
+          </button>
         ) : null}
 
         {sent ? (
-          <div className="gc-state">
-            <p className="gc-state__title">Message sent</p>
-            <p className="gc-state__hint">
-              We&rsquo;ll email you back at {email.trim()} as soon as a teammate is online.
-            </p>
-          </div>
+          <section className="gc-sentcard" role="status">
+            <span className="gc-okmark gc-okmark--lg" aria-hidden="true">
+              <Check size={18} />
+            </span>
+            <span className="gc-sentcard__text">
+              <span className="gc-sentcard__title">Message sent</span>
+              <span className="gc-sentcard__sub">
+                We&rsquo;ll reply to {email.trim()} as soon as a teammate is online.
+              </span>
+            </span>
+            <button
+              type="button"
+              className="gc-btn gc-btn--outline gc-btn--sm"
+              onClick={() => {
+                setBody("");
+                setSent(false);
+              }}
+            >
+              Send another
+            </button>
+          </section>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
+          <form
+            className="gc-away__form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submit();
+            }}
+          >
             <div className="gc-field">
-              <label className="gc-field__label" htmlFor="gc-offline-email">
+              <label className="gc-label" htmlFor="gc-offline-email">
                 Email
               </label>
               <input
@@ -111,45 +132,52 @@ export function OfflineMessageView({ getApi, config, contact, onAsk, onClose, on
                 autoComplete="email"
                 className="gc-input"
                 value={email}
-                placeholder="you@example.com"
+                placeholder="you@company.com"
                 onChange={(e) => setEmail(e.target.value)}
               />
             </div>
-            <div className="gc-field gc-field--grow">
-              <label className="gc-field__label" htmlFor="gc-offline-body">
+            <div className="gc-field">
+              <label className="gc-label" htmlFor="gc-offline-body">
                 Message
               </label>
               <textarea
                 id="gc-offline-body"
-                className="gc-textarea"
-                style={{ marginTop: 0, borderColor: "var(--gc-border)" }}
+                className="gc-textarea gc-textarea--short"
                 value={body}
+                maxLength={5000}
                 placeholder="What can we help with?"
                 onChange={(e) => setBody(e.target.value)}
               />
             </div>
             {error ? (
-              <p className="gc-state__hint" role="alert" style={{ color: "var(--gc-danger)" }}>
+              <p className="gc-formerror" role="alert">
                 {error}
               </p>
             ) : null}
-          </div>
+            <button
+              type="submit"
+              className="gc-btn gc-btn--accent gc-btn--block"
+              disabled={!email.trim() || !body.trim() || sending}
+            >
+              <Mail />
+              {sending ? "Sending…" : "Send and email me the reply"}
+            </button>
+          </form>
         )}
-      </div>
 
-      {sent ? null : (
-        <footer className="gc-panel__footer" style={{ padding: "12px 14px" }}>
-          <button
-            type="button"
-            className="gc-outlinebtn"
-            style={{ height: 38, borderRadius: 10, fontSize: 13, width: "100%" }}
-            disabled={!email.trim() || !body.trim() || sending}
-            onClick={submit}
-          >
-            {sending ? "Sending…" : "Send and email me the reply"}
+        {onHelp ? (
+          <button type="button" className="gc-linkcard gc-linkcard--end" onClick={onHelp}>
+            <span className="gc-linkcard__tile" aria-hidden="true">
+              <BookOpen />
+            </span>
+            <span className="gc-linkcard__text">
+              <span className="gc-linkcard__title">Browse the help centre</span>
+              <span className="gc-linkcard__sub">Answers are available any time.</span>
+            </span>
+            <ChevronRight className="gc-linkcard__chev" />
           </button>
-        </footer>
-      )}
+        ) : null}
+      </div>
     </>
   );
 }

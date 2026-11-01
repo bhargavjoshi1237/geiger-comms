@@ -1,11 +1,9 @@
 "use client";
 
-// Message/article/post rendering is an XSS boundary (spec §9): everything
-// renders as React text nodes — there is no dangerouslySetInnerHTML anywhere.
-// Supports a strict markdown subset: paragraphs, **bold**, *italic*, `code`,
-// - bullets and bare http(s) links.
+// XSS boundary (spec §9): React text nodes only, never dangerouslySetInnerHTML; "message" is a strict subset, "article" the lib/markdown grammar.
 
 import { useMemo } from "react";
+import { parseMarkdown } from "@/lib/markdown/parse";
 
 function renderInline(text, keyPrefix) {
   const pattern = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|https?:\/\/[^\s]+)/g;
@@ -36,7 +34,7 @@ function renderInline(text, keyPrefix) {
   return nodes;
 }
 
-export function MarkdownView({ text = "", className = "" }) {
+function MessageMarkdown({ text, className }) {
   const blocks = useMemo(() => String(text).replace(/\r\n/g, "\n").split(/\n{2,}/), [text]);
 
   return (
@@ -62,5 +60,90 @@ export function MarkdownView({ text = "", className = "" }) {
         );
       })}
     </div>
+  );
+}
+
+// URLs reaching href/src here already passed the parser's scheme allowlist.
+function renderArticleInline(nodes, keyPrefix) {
+  return nodes.map((node, i) => {
+    const key = `${keyPrefix}-${i}`;
+    switch (node.type) {
+      case "strong":
+        return <strong key={key}>{renderArticleInline(node.children, key)}</strong>;
+      case "em":
+        return <em key={key}>{renderArticleInline(node.children, key)}</em>;
+      case "code":
+        return <code key={key}>{node.text}</code>;
+      case "link":
+        return (
+          <a key={key} href={node.href} target="_blank" rel="noopener noreferrer nofollow">
+            {renderArticleInline(node.children, key)}
+          </a>
+        );
+      case "image":
+        // eslint-disable-next-line @next/next/no-img-element
+        return <img key={key} src={node.src} alt={node.alt} loading="lazy" referrerPolicy="no-referrer" />;
+      case "break":
+        return <br key={key} />;
+      default:
+        return node.text;
+    }
+  });
+}
+
+function ArticleMarkdown({ text, className }) {
+  const blocks = useMemo(() => parseMarkdown(text), [text]);
+
+  return (
+    <div className={`gc-md ${className}`.trim()}>
+      {blocks.map((block, bi) => {
+        const key = String(bi);
+        switch (block.type) {
+          case "heading":
+            return block.level === 2 ? (
+              <h2 key={key}>{renderArticleInline(block.inline, key)}</h2>
+            ) : (
+              <h3 key={key}>{renderArticleInline(block.inline, key)}</h3>
+            );
+          case "list": {
+            const items = block.items.map((item, li) => (
+              <li key={li}>{renderArticleInline(item, `${key}-${li}`)}</li>
+            ));
+            return block.ordered ? (
+              <ol key={key} start={block.start ?? undefined}>
+                {items}
+              </ol>
+            ) : (
+              <ul key={key}>{items}</ul>
+            );
+          }
+          case "callout":
+            return <blockquote key={key}>{renderArticleInline(block.inline, key)}</blockquote>;
+          case "code":
+            return (
+              <pre key={key}>
+                <code>{block.text}</code>
+              </pre>
+            );
+          case "hr":
+            return <hr key={key} />;
+          case "image":
+            return (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img key={key} src={block.src} alt={block.alt} loading="lazy" referrerPolicy="no-referrer" />
+            );
+          default:
+            return <p key={key}>{renderArticleInline(block.inline, key)}</p>;
+        }
+      })}
+    </div>
+  );
+}
+
+export function MarkdownView({ text = "", className = "", variant = "message" }) {
+  return variant === "article" ? (
+    <ArticleMarkdown text={text} className={className} />
+  ) : (
+    <MessageMarkdown text={text} className={className} />
   );
 }

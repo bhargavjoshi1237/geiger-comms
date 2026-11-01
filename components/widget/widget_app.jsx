@@ -17,9 +17,11 @@ import { NewsSpace } from "./news_space";
 import { TicketsSpace } from "./tickets_space";
 import { OfflineMessageView } from "./offline_message";
 import {
-  BookHeart,
+  BookOpen,
   BrandMark,
-  Mail,
+  firstName,
+  House,
+  initialsOf,
   MessageCircle,
   Newspaper,
   ReconnectingBanner,
@@ -51,6 +53,7 @@ const FATAL_BOOT = {
 const TRANSIENT_BOOT = "We couldn't reach chat right now. Please try again shortly.";
 
 const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const HEX_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 const pickText = (...values) => values.find((v) => typeof v === "string" && v.trim())?.trim() ?? "";
 
 // Server config → the flat view model every space reads; neutral defaults stand in for anything missing.
@@ -65,6 +68,8 @@ export function normalizeConfig(raw) {
     officeHoursNote: pickText(a.officeHoursNote, c.officeHoursNote),
     backAt: pickText(a.backAt, c.backAt),
     logoUrl: /^https:\/\//i.test(logo) ? logo : "",
+    // The launcher colour doubles as the panel accent: the visitor's bubbles, primary buttons and badges.
+    accent: HEX_RE.test(a.launcherColor || "") ? a.launcherColor : "",
     // AI surfaces (Ask, hand-over copy) only appear when the server names an assistant.
     assistantName: pickText(assistant.name, c.assistantName),
     assistantTagline: pickText(assistant.tagline, c.assistantTagline),
@@ -168,6 +173,7 @@ export function WidgetApp() {
   const listTimerRef = useRef(null);
   const pendingRef = useRef([]);
   const unreadRef = useRef({}); // mirror of unreadMap for diffing inside callbacks
+  const unreadPrimedRef = useRef(false); // a list has landed since unreadRef was reset, so growth means a new reply
   const openIdRef = useRef(null);
   const visibleRef = useRef(true);
   const liveRef = useRef("off");
@@ -217,6 +223,7 @@ export function WidgetApp() {
     disposeApi();
     realtimeRef.current?.setToken(null);
     unreadRef.current = {};
+    unreadPrimedRef.current = false;
   }, [clearRetry, disposeApi]);
 
   const resetView = useCallback(() => {
@@ -224,6 +231,7 @@ export function WidgetApp() {
     setRoute(HOME_ROUTE);
     setConvos({ rows: null, failed: false });
     unreadRef.current = {};
+    unreadPrimedRef.current = false;
     setUnreadMap({});
     setThreadTicks({});
     setContent(EMPTY_CONTENT);
@@ -356,6 +364,7 @@ export function WidgetApp() {
   }, []);
 
   // The list carries the authoritative unread counts; a count that grew lights the launcher's "<agent> replied" pill.
+  // Growth after the first list of a session is a reply that just arrived, so it also rings the host's chime; replies already waiting at boot don't.
   const loadConversations = useCallback(async () => {
     const api = apiRef.current;
     if (!api) return;
@@ -366,9 +375,20 @@ export function WidgetApp() {
       const next = unreadFromRows(list, visibleRef.current ? openIdRef.current : null);
       const prev = unreadRef.current;
       const grew = list.find((r) => (next[r.id] || 0) > (prev[r.id] || 0));
+      const arrived = Boolean(grew) && unreadPrimedRef.current;
+      unreadPrimedRef.current = true;
       setConvos({ rows: list, failed: false });
       commitUnread(next);
-      if (grew) postToHost("launcher", { unreadReply: true, author: grew.agentName || null });
+      // The loader is size-capped, so it gets the pill's words ready-made: "Maya" replied, beside an "MR" disc.
+      if (grew) {
+        const author = grew.agentName || "";
+        postToHost("launcher", {
+          unreadReply: true,
+          author: firstName(author) || null,
+          initials: author ? initialsOf(author) : null,
+        });
+      }
+      if (arrived) postToHost("chime");
     } catch {
       if (apiRef.current === api) setConvos((c) => (c.rows ? c : { rows: null, failed: true }));
     }
@@ -646,7 +666,7 @@ export function WidgetApp() {
 
   if (phase === "waiting" || phase === "booting") {
     return (
-      <Shell theme={theme}>
+      <Shell theme={theme} accent={config.accent}>
         <div className="gc-boot">
           <LogoLoading size={64} aria-label="Starting chat" />
           <p className="gc-boot__label">{phase === "waiting" ? "Starting chat" : "Signing you in"}</p>
@@ -657,7 +677,7 @@ export function WidgetApp() {
 
   if (phase === "error") {
     return (
-      <Shell theme={theme}>
+      <Shell theme={theme} accent={config.accent}>
         <div className="gc-boot" role="alert">
           <span className="gc-boot__mark" aria-hidden="true">
             <BrandMark size={24} />
@@ -666,7 +686,7 @@ export function WidgetApp() {
           {retryable ? (
             <button
               type="button"
-              className="gc-outlinebtn"
+              className="gc-btn gc-btn--outline gc-btn--sm"
               onClick={() => {
                 failuresRef.current = 0;
                 void boot(lastBootRef.current);
@@ -707,7 +727,7 @@ export function WidgetApp() {
   };
 
   return (
-    <Shell theme={theme}>
+    <Shell theme={theme} accent={config.accent}>
       <div className="gc-panel" role="dialog" aria-label="Messenger">
         <ReconnectingBanner
           visible={reconnecting}
@@ -720,6 +740,7 @@ export function WidgetApp() {
             config={config}
             contact={contact}
             onAsk={config.assistantName ? () => setRoute({ space: "ask" }) : null}
+            onHelp={tabVisible(config, content, "help") ? () => setRoute({ space: "help" }) : null}
             onClose={() => postToHost("close")}
             onEmailSupplied={onEmailSupplied}
           />
@@ -745,10 +766,35 @@ export function WidgetApp() {
   );
 }
 
+// WCAG relative luminance of a #rgb / #rrggbb colour.
+function luminance(hex) {
+  let h = hex.slice(1);
+  if (h.length === 3) h = h.replace(/./g, "$&$&");
+  const [r, g, b] = [0, 2, 4].map((i) => {
+    const v = parseInt(h.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+
+// The launcher colour as the panel accent plus the ink that reads on it; one the panel would swallow falls back to ink or white.
+export function accentVars(hex, theme) {
+  const panel = theme === "light" ? 1 : luminance("#161616");
+  let accent = HEX_RE.test(hex || "") ? hex : "#ffffff";
+  if (contrast(luminance(accent), panel) < 1.6) accent = theme === "light" ? "#18181b" : "#ffffff";
+  const l = luminance(accent);
+  return {
+    "--gc-accent": accent,
+    "--gc-accent-ink": contrast(l, 1) >= contrast(l, luminance("#161616")) ? "#ffffff" : "#161616",
+  };
+}
+
 // The token scope and the frame the loader's iframe fills.
-function Shell({ theme, children }) {
+function Shell({ theme, accent, children }) {
   return (
-    <div className="gc-widget gc-widget--framed" data-theme={theme}>
+    <div className="gc-widget gc-widget--framed" data-theme={theme} style={accentVars(accent, theme)}>
       <div className="gc-root">{children}</div>
     </div>
   );
@@ -756,9 +802,9 @@ function Shell({ theme, children }) {
 
 // Intercom's space set (spec §9); which of them appear is decided per session.
 const TABS = [
-  { id: "home", label: "Home", Icon: MessageCircle },
-  { id: "messages", label: "Messages", Icon: Mail },
-  { id: "help", label: "Help", Icon: BookHeart },
+  { id: "home", label: "Home", Icon: House },
+  { id: "messages", label: "Messages", Icon: MessageCircle },
+  { id: "help", label: "Help", Icon: BookOpen },
   { id: "news", label: "News", Icon: Newspaper },
   { id: "tickets", label: "Tickets", Icon: Ticket },
 ];
@@ -768,11 +814,7 @@ function TabBar({ tabs, active, unread = 0, onChange }) {
   if (tabs.length < 2) return null;
 
   return (
-    <nav
-      className="gc-tabs"
-      aria-label="Messenger sections"
-      style={{ gridTemplateColumns: `repeat(${tabs.length}, 1fr)` }}
-    >
+    <nav className="gc-tabs" aria-label="Messenger sections">
       {tabs.map(({ id, label, Icon }) => {
         const selected = id === active;
         const badge = id === "messages" && unread > 0;
@@ -786,7 +828,7 @@ function TabBar({ tabs, active, unread = 0, onChange }) {
             onClick={() => onChange({ space: id })}
           >
             <span className="gc-tab__icon">
-              <Icon />
+              <Icon size={19} />
               {badge ? (
                 <span className="gc-tab__badge" aria-hidden="true">
                   {unread > 99 ? "99+" : unread}

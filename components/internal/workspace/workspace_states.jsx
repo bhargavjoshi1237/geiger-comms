@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { Loader2, FolderPlus } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@geiger/ui";
+import { Button, LogoLoading } from "@geiger/ui";
 import { Input } from "@geiger/ui";
 import { EmptyState } from "@/components/internal/shared/screen_kit";
 import { useProject } from "@/context/project-context";
@@ -13,9 +13,8 @@ import { useProject } from "@/context/project-context";
 
 export function LoadingArea() {
   return (
-    <div className="flex h-full w-full items-center justify-center gap-2 text-sm text-text-secondary">
-      <Loader2 className="h-4 w-4 animate-spin" />
-      Loading…
+    <div className="flex h-full w-full items-center justify-center">
+      <LogoLoading size={80} aria-label="Loading workspace" />
     </div>
   );
 }

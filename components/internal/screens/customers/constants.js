@@ -1,11 +1,8 @@
 "use client";
 
-// Shared constants + demo fallback + segment matching for the Customers area.
-// People is the hub (the contact record + its unified lifelong timeline);
-// Companies groups people by company; Segments is a saved filter over people.
+// Customers lookups, formatters and segment-rule config (comms.contact_matches_rules mirrors SEGMENT_FIELDS).
 
 import {
-  Building2,
   Mail,
   MessageCircle,
   MessagesSquare,
@@ -19,11 +16,11 @@ import {
 } from "lucide-react";
 
 export const LIFECYCLE_MAP = {
-  lead: { label: "Lead", tone: "sky" },
-  trial: { label: "Trial", tone: "amber" },
-  customer: { label: "Customer", tone: "emerald" },
-  vip: { label: "VIP", tone: "violet" },
-  churned: { label: "Churned", tone: "slate" },
+  lead: { label: "Lead", variant: "info", dotClass: "bg-sky-400" },
+  trial: { label: "Trial", variant: "warning", dotClass: "bg-amber-400" },
+  customer: { label: "Customer", variant: "success", dotClass: "bg-emerald-400" },
+  vip: { label: "VIP", variant: "purple", dotClass: "bg-violet-400" },
+  churned: { label: "Churned", variant: "neutral", dotClass: "bg-slate-400" },
 };
 
 export const LIFECYCLE_FILTER_OPTIONS = [
@@ -34,7 +31,7 @@ export const LIFECYCLE_FILTER_OPTIONS = [
   })),
 ];
 
-export const CHANNEL_ICON = {
+const CHANNEL_ICON = {
   Email: Mail,
   Chat: MessageCircle,
   Slack: MessagesSquare,
@@ -54,6 +51,10 @@ export function initialsOf(name, email) {
     .slice(0, 2)
     .map((p) => p[0]?.toUpperCase() || "")
     .join("");
+}
+
+export function tagLabel(t) {
+  return typeof t === "string" ? t : t?.name || "";
 }
 
 export function formatDate(dateStr) {
@@ -100,300 +101,202 @@ export function formatRelativeTime(dateStr) {
   return `${Math.floor(days / 365)}y ago`;
 }
 
-export function domainOf(email) {
-  const domain = (email || "").split("@")[1] || "";
-  return domain.toLowerCase();
+// Puts a row back where an optimistic removal took it from (rollback).
+export function restoreRow(rows, row, index) {
+  if (!row || rows.some((r) => r.id === row.id)) return rows;
+  const at = Math.min(Math.max(index, 0), rows.length);
+  return [...rows.slice(0, at), row, ...rows.slice(at)];
 }
 
-// ---- demo fallback ----------------------------------------------------------
-// Shown when Supabase is unconfigured or the project has no contacts yet, so
-// the screens still demonstrate the full surface.
+// ---- custom attributes ------------------------------------------------------
 
-const now = Date.now();
-const daysAgo = (n) => new Date(now - n * 86400000).toISOString();
-const hoursAgo = (n) => new Date(now - n * 3600000).toISOString();
-
-export const DEMO_PEOPLE = [
-  {
-    id: "demo-person-1",
-    name: "Maya Chen",
-    email: "maya@northwind.io",
-    avatarUrl: "",
-    company: "Northwind",
-    phone: "+1 (415) 555-0132",
-    location: "San Francisco, CA",
-    timezone: "PT (UTC−8)",
-    language: "English",
-    title: "Head of Support",
-    lifecycle: "vip",
-    owner: "Aria Sharma",
-    website: "northwind.io",
-    tags: ["vip", "billing"],
-    notes: [
-      {
-        id: "n1",
-        body: "Prefers email over chat. Renewing in Q4 — loop in Marco before quoting.",
-        author: "Aria Sharma",
-        createdAt: daysAgo(2),
-      },
-    ],
-    tasks: [
-      {
-        id: "t1",
-        title: "Send refund confirmation",
-        done: false,
-        dueAt: daysAgo(-1),
-      },
-    ],
-    subscribedEmail: true,
-    subscribedSms: false,
-    custom: { plan: "Pro", seats: 48, mrr: "$1,920" },
-    createdAt: daysAgo(210),
-    updatedAt: hoursAgo(3),
-  },
-  {
-    id: "demo-person-2",
-    name: "Devon Parker",
-    email: "devon@lumen.app",
-    avatarUrl: "",
-    company: "Lumen",
-    phone: "+1 (212) 555-0184",
-    location: "New York, NY",
-    timezone: "ET (UTC−5)",
-    language: "English",
-    title: "Ops Manager",
-    lifecycle: "trial",
-    owner: "Aria Sharma",
-    website: "lumen.app",
-    tags: ["feature-request"],
-    notes: [],
-    tasks: [
-      { id: "t2", title: "Share SSO setup guide", done: true, dueAt: daysAgo(6) },
-    ],
-    subscribedEmail: true,
-    subscribedSms: true,
-    custom: { plan: "Trial", seats: 12, mrr: "$0" },
-    createdAt: daysAgo(12),
-    updatedAt: hoursAgo(1),
-  },
-  {
-    id: "demo-person-3",
-    name: "Priya Nair",
-    email: "priya@grovehq.com",
-    avatarUrl: "",
-    company: "Grove HQ",
-    phone: "",
-    location: "Austin, TX",
-    timezone: "CT (UTC−6)",
-    language: "English",
-    title: "Developer",
-    lifecycle: "customer",
-    owner: "June Park",
-    website: "grovehq.com",
-    tags: [],
-    notes: [],
-    tasks: [],
-    subscribedEmail: true,
-    subscribedSms: false,
-    custom: { plan: "Growth", seats: 25, mrr: "$875" },
-    createdAt: daysAgo(96),
-    updatedAt: daysAgo(1),
-  },
-  {
-    id: "demo-person-4",
-    name: "Tomas Ruiz",
-    email: "tomas@fielded.co",
-    avatarUrl: "",
-    company: "Fielded",
-    phone: "+34 600 123 456",
-    location: "Madrid, ES",
-    timezone: "CET (UTC+1)",
-    language: "Spanish",
-    title: "Field Operations",
-    lifecycle: "lead",
-    owner: "",
-    website: "fielded.co",
-    tags: ["bug"],
-    notes: [],
-    tasks: [{ id: "t3", title: "Follow up on mobile logout bug", done: false, dueAt: daysAgo(-3) }],
-    subscribedEmail: false,
-    subscribedSms: false,
-    custom: { plan: "—", seats: 6, mrr: "$0" },
-    createdAt: daysAgo(4),
-    updatedAt: hoursAgo(5),
-  },
-  {
-    id: "demo-person-5",
-    name: "Hannah Feld",
-    email: "hannah@brightloop.io",
-    avatarUrl: "",
-    company: "Brightloop",
-    phone: "",
-    location: "Berlin, DE",
-    timezone: "CET (UTC+1)",
-    language: "German",
-    title: "Product Designer",
-    lifecycle: "customer",
-    owner: "Marco Diaz",
-    website: "brightloop.io",
-    tags: [],
-    notes: [
-      {
-        id: "n2",
-        body: "Loves the new dashboard — candidate for a testimonial.",
-        author: "Marco Diaz",
-        createdAt: daysAgo(9),
-      },
-    ],
-    tasks: [],
-    subscribedEmail: true,
-    subscribedSms: false,
-    custom: { plan: "Team", seats: 18, mrr: "$540" },
-    createdAt: daysAgo(140),
-    updatedAt: daysAgo(3),
-  },
-  {
-    id: "demo-person-6",
-    name: "Owen Blake",
-    email: "owen@harborline.com",
-    avatarUrl: "",
-    company: "Harborline",
-    phone: "+1 (206) 555-0119",
-    location: "Seattle, WA",
-    timezone: "PT (UTC−8)",
-    language: "English",
-    title: "Finance Lead",
-    lifecycle: "churned",
-    owner: "Aria Sharma",
-    website: "harborline.com",
-    tags: ["billing"],
-    notes: [],
-    tasks: [],
-    subscribedEmail: false,
-    subscribedSms: false,
-    custom: { plan: "Cancelled", seats: 0, mrr: "$0" },
-    createdAt: daysAgo(320),
-    updatedAt: daysAgo(12),
-  },
+export const ATTRIBUTE_TYPES = [
+  { value: "text", label: "Text" },
+  { value: "number", label: "Number" },
+  { value: "date", label: "Date" },
+  { value: "boolean", label: "True / false" },
+  { value: "select", label: "List" },
 ];
 
+// Coerces a raw (CSV or input) value to the attribute's type; undefined = unusable.
+export function coerceAttribute(type, raw) {
+  const text = String(raw ?? "").trim();
+  if (text === "") return undefined;
+  if (type === "number") {
+    const n = Number(text.replace(/[\s,$€£¥]/g, ""));
+    return Number.isFinite(n) ? n : undefined;
+  }
+  if (type === "boolean") {
+    if (/^(true|yes|y|1)$/i.test(text)) return true;
+    if (/^(false|no|n|0)$/i.test(text)) return false;
+    return undefined;
+  }
+  if (type === "date") {
+    const d = new Date(text);
+    return Number.isNaN(d.getTime()) ? undefined : d.toISOString().slice(0, 10);
+  }
+  return text;
+}
+
+// ---- companies ----------------------------------------------------------------
+
+// Company rows for the list: the record plus its linked people and thread counts.
+export function summarizeCompanies(companies, people, conversations) {
+  const peopleByCompany = new Map();
+  for (const p of people || []) {
+    if (!p.companyId) continue;
+    if (!peopleByCompany.has(p.companyId)) peopleByCompany.set(p.companyId, []);
+    peopleByCompany.get(p.companyId).push(p);
+  }
+  const convos = conversations || [];
+  return (companies || []).map((company) => {
+    const members = peopleByCompany.get(company.id) || [];
+    const ids = new Set(members.map((p) => p.id));
+    const emails = new Set(
+      members.map((p) => (p.email || "").toLowerCase()).filter(Boolean),
+    );
+    const related = convos.filter(
+      (cv) =>
+        ids.has(cv.contactId) ||
+        (cv.contactEmail && emails.has(cv.contactEmail.toLowerCase())),
+    );
+    const last = related
+      .map((cv) => cv.lastMessageAt || cv.createdAt)
+      .filter(Boolean)
+      .sort()
+      .reverse()[0];
+    return {
+      ...company,
+      people: members,
+      conversations: related,
+      contactCount: members.length,
+      conversationCount: related.length,
+      openCount: related.filter(
+        (cv) => (cv.status || "").toLowerCase() !== "closed",
+      ).length,
+      lastActivityAt: last || company.updatedAt,
+    };
+  });
+}
+
+// People carrying a company name with no company record link, grouped by name.
+export function unlinkedCompanyGroups(people) {
+  const groups = new Map();
+  for (const p of people || []) {
+    const name = (p.company || "").trim();
+    if (!name || p.companyId) continue;
+    const key = name.toLowerCase();
+    if (!groups.has(key)) groups.set(key, { name, people: [] });
+    groups.get(key).people.push(p);
+  }
+  return [...groups.values()];
+}
+
+// ---- segments -----------------------------------------------------------------
+
+export const SEGMENT_OPERATOR_LABELS = {
+  is: "is",
+  is_not: "is not",
+  contains: "contains",
+  within_days: "within the last",
+};
+
+const TEXT_OPERATORS = ["is", "is_not", "contains"];
+
+const SEGMENT_FIELDS = [
+  { value: "lifecycle", label: "Lifecycle stage", operators: ["is", "is_not"], input: "lifecycle" },
+  { value: "tag", label: "Tag", operators: TEXT_OPERATORS, input: "text" },
+  { value: "company", label: "Company", operators: TEXT_OPERATORS, input: "text" },
+  { value: "location", label: "Location", operators: TEXT_OPERATORS, input: "text" },
+  { value: "emailOpt", label: "Email subscription", operators: ["is"], input: "subscription" },
+  { value: "created", label: "Created", operators: ["within_days"], input: "days" },
+];
+
+export const SUBSCRIPTION_OPTIONS = [
+  { value: "in", label: "Subscribed" },
+  { value: "out", label: "Unsubscribed" },
+];
+
+// Built-in fields plus one per contact custom attribute (custom:<key>).
+export function segmentFields(attributes) {
+  return [
+    ...SEGMENT_FIELDS,
+    ...(attributes || [])
+      .filter((a) => a.entity === "contact")
+      .map((a) => ({
+        value: `custom:${a.key}`,
+        label: a.label,
+        operators: a.type === "boolean" || a.type === "select" ? ["is", "is_not"] : TEXT_OPERATORS,
+        input: a.type === "boolean" ? "boolean" : a.type === "select" ? "options" : "text",
+        options: a.options,
+      })),
+  ];
+}
+
+export function blankRule(fields = SEGMENT_FIELDS) {
+  const field = fields[0];
+  return { field: field.value, operator: field.operators[0], value: "" };
+}
+
+// Rules worth saving: a field and a value ("created" defaults to 7 days in SQL).
+export function completeRules(rules) {
+  return (rules || []).filter(
+    (r) => r.field && (r.field === "created" || String(r.value ?? "").trim() !== ""),
+  );
+}
+
+export function ruleSummary(rule, fields = SEGMENT_FIELDS) {
+  const field = fields.find((f) => f.value === rule.field);
+  const op = SEGMENT_OPERATOR_LABELS[rule.operator] || rule.operator;
+  let value = rule.value || "—";
+  if (rule.field === "lifecycle") value = LIFECYCLE_MAP[rule.value]?.label || value;
+  if (rule.field === "emailOpt") {
+    return rule.value === "out" ? "Unsubscribed from email" : "Subscribed to email";
+  }
+  if (rule.field === "created") return `Created within the last ${rule.value || 7} days`;
+  return `${field?.label || rule.field.replace(/^custom:/, "")} ${op} ${value}`;
+}
+
+export function rulesSummary(rules, fields) {
+  const complete = completeRules(rules);
+  return complete.length
+    ? complete.map((r) => ruleSummary(r, fields)).join(" · ")
+    : "Everyone";
+}
+
+// Built-in audiences are config, not rows: they always exist and are read-only.
 export const DEFAULT_SEGMENTS = [
   {
-    id: "seg-all",
-    name: "All contacts",
+    id: "builtin-all",
+    name: "All people",
     description: "Everyone with a contact record in this workspace.",
     rules: [],
-    builtIn: true,
-    createdAt: daysAgo(90),
-    updatedAt: hoursAgo(26),
   },
   {
-    id: "seg-vip",
+    id: "builtin-vip",
     name: "VIPs",
-    description: "Lifecycle is VIP or tagged vip.",
-    rules: [{ field: "tag", operator: "is", value: "vip" }],
-    builtIn: true,
-    createdAt: daysAgo(60),
-    updatedAt: daysAgo(4),
+    description: "Lifecycle stage is VIP.",
+    rules: [{ field: "lifecycle", operator: "is", value: "vip" }],
   },
   {
-    id: "seg-new",
+    id: "builtin-new",
     name: "New this week",
     description: "Created in the last 7 days.",
     rules: [{ field: "created", operator: "within_days", value: "7" }],
-    builtIn: true,
-    createdAt: daysAgo(30),
-    updatedAt: daysAgo(2),
   },
   {
-    id: "seg-trials",
-    name: "Active trials",
-    description: "Lifecycle trial or customer without a recent reply.",
+    id: "builtin-trials",
+    name: "Trials",
+    description: "Lifecycle stage is Trial.",
     rules: [{ field: "lifecycle", operator: "is", value: "trial" }],
-    builtIn: true,
-    createdAt: daysAgo(45),
-    updatedAt: daysAgo(6),
   },
   {
-    id: "seg-unsub",
+    id: "builtin-unsubscribed",
     name: "Unsubscribed from email",
     description: "Email opt-outs — exclude from campaigns.",
     rules: [{ field: "emailOpt", operator: "is", value: "out" }],
-    builtIn: true,
-    createdAt: daysAgo(20),
-    updatedAt: daysAgo(1),
   },
-];
-
-// ---- segment matching -------------------------------------------------------
-
-export const SEGMENT_FIELDS = [
-  { value: "lifecycle", label: "Lifecycle stage" },
-  { value: "tag", label: "Tag" },
-  { value: "company", label: "Company" },
-  { value: "location", label: "Location" },
-  { value: "emailOpt", label: "Email subscription" },
-  { value: "created", label: "Created" },
-];
-
-export const SEGMENT_OPERATORS = [
-  { value: "is", label: "is" },
-  { value: "is_not", label: "is not" },
-  { value: "contains", label: "contains" },
-  { value: "within_days", label: "within last (days)" },
-];
-
-export function personMatchesRule(person, rule) {
-  if (!rule?.field) return true;
-  const v = (rule.value || "").toLowerCase();
-  switch (rule.field) {
-    case "lifecycle":
-      return rule.operator === "is_not"
-        ? (person.lifecycle || "") !== rule.value
-        : (person.lifecycle || "") === rule.value;
-    case "tag": {
-      const tags = (person.tags || []).map((t) =>
-        typeof t === "string" ? t.toLowerCase() : (t.name || "").toLowerCase(),
-      );
-      const hit = tags.some((t) => (rule.operator === "contains" ? t.includes(v) : t === v));
-      return rule.operator === "is_not" ? !hit : hit;
-    }
-    case "company": {
-      const c = (person.company || "").toLowerCase();
-      const hit = rule.operator === "contains" ? c.includes(v) : c === v;
-      return rule.operator === "is_not" ? !hit : hit;
-    }
-    case "location": {
-      const loc = (person.location || "").toLowerCase();
-      const hit = rule.operator === "contains" ? loc.includes(v) : loc === v;
-      return rule.operator === "is_not" ? !hit : hit;
-    }
-    case "emailOpt": {
-      const out = person.subscribedEmail === false;
-      return rule.value === "out" ? out : !out;
-    }
-    case "created": {
-      const days = Number(rule.value) || 7;
-      const created = new Date(person.createdAt).getTime();
-      if (Number.isNaN(created)) return false;
-      return Date.now() - created <= days * 86400000;
-    }
-    default:
-      return true;
-  }
-}
-
-export function personMatchesSegment(person, segment) {
-  const rules = segment?.rules || [];
-  if (rules.length === 0) return true;
-  return rules.every((r) => personMatchesRule(person, r));
-}
-
-export function ruleSummary(rule) {
-  const field = SEGMENT_FIELDS.find((f) => f.value === rule.field)?.label || rule.field;
-  const op = SEGMENT_OPERATORS.find((o) => o.value === rule.operator)?.label || rule.operator;
-  return `${field} ${op} ${rule.value || "—"}`;
-}
+].map((s) => ({ ...s, builtIn: true, createdAt: null, updatedAt: null }));
 
 // ---- timeline ---------------------------------------------------------------
 
@@ -406,7 +309,7 @@ export const TIMELINE_META = {
   person: { label: "Contact", icon: UserPlus, tone: "text-text-secondary" },
 };
 
-export function buildTimeline({ person, conversations, tickets, tagsByConversation }) {
+export function buildTimeline({ person, conversations, tickets }) {
   const events = [];
   for (const c of conversations || []) {
     events.push({
@@ -418,7 +321,7 @@ export function buildTimeline({ person, conversations, tickets, tagsByConversati
       meta: `${c.channel || "Chat"} · ${c.status || "Open"}`,
       refId: c.id,
     });
-    for (const t of c.tags || tagsByConversation?.[c.id] || []) {
+    for (const t of c.tags || []) {
       events.push({
         id: `tag-${c.id}-${t.id || t.name}`,
         kind: "tag",
@@ -472,52 +375,3 @@ export function buildTimeline({ person, conversations, tickets, tagsByConversati
     .filter((e) => e.at)
     .sort((a, b) => new Date(b.at) - new Date(a.at));
 }
-
-export function deriveCompanies(people, conversations) {
-  const byCompany = new Map();
-  for (const p of people || []) {
-    const name = (p.company || "").trim() || "No company";
-    if (!byCompany.has(name)) {
-      byCompany.set(name, {
-        id: `company-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-        name,
-        domain: domainOf(p.email) || (p.website || ""),
-        website: p.website || (domainOf(p.email) ? `www.${domainOf(p.email)}` : ""),
-        owner: p.owner || "",
-        people: [],
-        createdAt: p.createdAt,
-        updatedAt: p.updatedAt,
-      });
-    }
-    const c = byCompany.get(name);
-    c.people.push(p);
-    if (!c.owner && p.owner) c.owner = p.owner;
-    if (p.createdAt && (!c.createdAt || p.createdAt < c.createdAt)) c.createdAt = p.createdAt;
-    if (p.updatedAt && (!c.updatedAt || p.updatedAt > c.updatedAt)) c.updatedAt = p.updatedAt;
-  }
-  const convos = conversations || [];
-  return [...byCompany.values()].map((c) => {
-    const emails = new Set(c.people.map((p) => (p.email || "").toLowerCase()));
-    const ids = new Set(c.people.map((p) => p.id));
-    const related = convos.filter(
-      (cv) =>
-        ids.has(cv.contactId) ||
-        (cv.contactEmail && emails.has((cv.contactEmail || "").toLowerCase())),
-    );
-    const open = related.filter((cv) => (cv.status || "").toLowerCase() !== "closed");
-    const last = related
-      .map((cv) => cv.lastMessageAt || cv.createdAt)
-      .filter(Boolean)
-      .sort()
-      .reverse()[0];
-    return {
-      ...c,
-      contactCount: c.people.length,
-      conversationCount: related.length,
-      openCount: open.length,
-      lastActivityAt: last || c.updatedAt,
-    };
-  });
-}
-
-export { Building2 };

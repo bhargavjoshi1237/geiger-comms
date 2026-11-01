@@ -1,6 +1,6 @@
 "use client";
 
-// SLA Policies: ordered response + resolution targets over comms.sla_policies. The conversations_apply_sla trigger applies the first enabled match by position, so order matters and is editable here; live counts come from open conversations' sla_state.
+// SLA Policies: ordered response + resolution targets over comms.sla_policies. The conversations_apply_sla trigger applies the first enabled match by position, so order matters and is editable here; live counts come from open conversations' sla_state, which the automation tick keeps current.
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -26,8 +26,11 @@ import {
   StatsBar,
   Toolbar,
 } from "@/components/internal/shared/screen_kit";
+import { Gated } from "@/components/internal/shared/gated";
+import { Notice } from "@/components/internal/shared/notice";
 import FilterDropdown from "../overview/filter_dropdown";
 import { useOptionalProject } from "@/context/project-context";
+import { useCan } from "@/context/rbac-context";
 import {
   createSlaPolicy,
   listSlaPolicies,
@@ -38,7 +41,13 @@ import {
 } from "@/lib/supabase/sla_policies";
 import { listBusinessHours } from "@/lib/supabase/business_hours";
 import { getUser } from "@/lib/supabase/user";
-import { ENABLED_FILTER_OPTIONS, formatMinutes, summarizeMatch } from "./constants";
+import {
+  ENABLED_FILTER_OPTIONS,
+  MANAGE_PERMISSION,
+  NEEDS_MANAGE_SLA,
+  formatMinutes,
+  summarizeMatch,
+} from "./constants";
 import { OrderButtons } from "./rule_fields";
 import { SlaPolicyDialog } from "./sla_policy_dialog";
 
@@ -73,6 +82,9 @@ const nextPosition = (rows) =>
 
 export function SLAPoliciesScreen() {
   const { projectId } = useOptionalProject() ?? {};
+  // Advisory: RLS refuses SLA policy writes without comms.settings.manage; the dialog still opens read-only.
+  const canManage = useCan(MANAGE_PERMISSION);
+  const reason = canManage ? null : NEEDS_MANAGE_SLA;
 
   const [policies, setPolicies] = useState([]);
   const [usage, setUsage] = useState(EMPTY_USAGE);
@@ -253,8 +265,8 @@ export function SLAPoliciesScreen() {
                 label={row.name}
                 onUp={() => void handleMove(row, -1)}
                 onDown={() => void handleMove(row, 1)}
-                disableUp={rank <= 1}
-                disableDown={rank >= policies.length}
+                disableUp={!canManage || rank <= 1}
+                disableDown={!canManage || rank >= policies.length}
               />
             )}
           </div>
@@ -324,11 +336,14 @@ export function SLAPoliciesScreen() {
       header: "Enabled",
       render: (row) => (
         <div onClick={(e) => e.stopPropagation()}>
-          <Switch
-            checked={row.enabled}
-            onCheckedChange={(v) => void handleToggle(row, v)}
-            aria-label={`${row.enabled ? "Disable" : "Enable"} ${row.name}`}
-          />
+          <Gated reason={reason}>
+            <Switch
+              checked={row.enabled}
+              disabled={!canManage}
+              onCheckedChange={(v) => void handleToggle(row, v)}
+              aria-label={`${row.enabled ? "Disable" : "Enable"} ${row.name}`}
+            />
+          </Gated>
         </div>
       ),
     },
@@ -341,16 +356,17 @@ export function SLAPoliciesScreen() {
         <ActionMenu
           label={`Actions for ${row.name}`}
           items={[
-            { icon: Pencil, label: "Edit", onSelect: () => openEditor(row) },
-            { icon: Copy, label: "Duplicate", onSelect: () => handleDuplicate(row) },
+            { icon: Pencil, label: canManage ? "Edit" : "View", onSelect: () => openEditor(row) },
+            { icon: Copy, label: "Duplicate", disabled: !canManage, onSelect: () => handleDuplicate(row) },
             row.enabled
-              ? { icon: Pause, label: "Disable", onSelect: () => void handleToggle(row, false) }
-              : { icon: Play, label: "Enable", onSelect: () => void handleToggle(row, true) },
+              ? { icon: Pause, label: "Disable", disabled: !canManage, onSelect: () => void handleToggle(row, false) }
+              : { icon: Play, label: "Enable", disabled: !canManage, onSelect: () => void handleToggle(row, true) },
             { separator: true },
             {
               icon: Trash2,
               label: "Delete",
               variant: "destructive",
+              disabled: !canManage,
               onSelect: () => setDeleteTarget(row),
             },
           ]}
@@ -360,12 +376,15 @@ export function SLAPoliciesScreen() {
   ];
 
   const createButton = (
-    <Button
-      className="bg-primary text-primary-foreground hover:bg-primary/90"
-      onClick={() => openEditor(null)}
-    >
-      <Plus className="h-4 w-4" /> New policy
-    </Button>
+    <Gated reason={reason}>
+      <Button
+        className="bg-primary text-primary-foreground hover:bg-primary/90"
+        disabled={!canManage}
+        onClick={() => openEditor(null)}
+      >
+        <Plus className="h-4 w-4" /> New policy
+      </Button>
+    </Gated>
   );
 
   return (
@@ -375,6 +394,10 @@ export function SLAPoliciesScreen() {
         description="Response and resolution targets for your conversations. Policies are checked top to bottom; the first one that matches a conversation's channel and priority applies."
         actions={createButton}
       />
+
+      {!canManage && !loading ? (
+        <Notice>You can see these SLA policies. Changing them needs the Manage settings permission.</Notice>
+      ) : null}
 
       <StatsBar stats={stats} />
 
@@ -441,6 +464,7 @@ export function SLAPoliciesScreen() {
           open
           policy={editor.policy}
           businessHours={hours}
+          readOnly={!canManage}
           onCancel={() => setEditor(null)}
           onSave={handleSave}
         />

@@ -29,6 +29,8 @@ export function Topbar() {
 
   useEffect(() => {
     const onKey = (e) => {
+      // A focused control that claims ⌘K (the article editor's link tool) wins over the palette.
+      if (e.defaultPrevented) return;
       if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === "k") {
         e.preventDefault();
         setPaletteOpen((open) => !open);

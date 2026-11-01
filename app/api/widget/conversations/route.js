@@ -1,7 +1,9 @@
 // GET  /api/widget/conversations — this caller's conversations only (preview/unread from visible messages; notes never count).
 // POST /api/widget/conversations — start one ({ subject?, firstMessage?, aboutKind?, aboutOrderId?, aboutLabel? }).
 
+import { after } from "next/server";
 import { errorResponse, jsonResponse, readJsonBody } from "@/lib/widget/respond";
+import { runConversationAutomation } from "@/lib/automation/events";
 import { requirePrincipal } from "@/lib/widget/auth";
 import { isWidgetApiConfigured } from "@/lib/widget/service";
 import { getAppById } from "@/lib/widget/apps";
@@ -78,7 +80,11 @@ export async function POST(request) {
       body: firstMessage,
       authorRole: "customer",
     });
-    if (sent.message) message = messageVm(sent.message);
+    if (sent.message) {
+      message = messageVm(sent.message);
+      // Workflows and routing for the new conversation run once the response is out.
+      after(() => runConversationAutomation(conversation.id));
+    }
   }
 
   return jsonResponse({ conversation: conversationVm(conversation), message }, 201);

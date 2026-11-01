@@ -20,6 +20,7 @@ import { GripVertical, Zap } from "lucide-react";
 import { nodeTypes } from "./workflow_nodes";
 import { ZoomControls } from "./zoom_controls";
 import { stepsToGraph, graphToSteps } from "@/lib/workflows/graph";
+import { unavailableReason } from "@/lib/workflows/availability";
 import {
   CANVAS_FIT_VIEW,
   SNAP_SIZES,
@@ -60,6 +61,24 @@ function Palette() {
               </p>
               {group.items.map((item) => {
                 const Icon = item.icon || Zap;
+                const reason = group.kind === "action" ? unavailableReason(item.key) : null;
+                if (reason) {
+                  return (
+                    <div
+                      key={item.key}
+                      title={reason}
+                      aria-disabled="true"
+                      className="flex cursor-not-allowed items-start gap-1.5 rounded-md px-1.5 py-1.5 text-xs text-text-tertiary"
+                    >
+                      <GripVertical className="mt-px h-3.5 w-3.5 shrink-0 opacity-0" />
+                      <Icon className="mt-px h-3.5 w-3.5 shrink-0" />
+                      <span className="min-w-0">
+                        <span className="block truncate">{item.label}</span>
+                        <span className="line-clamp-2 text-[10px]">{reason}</span>
+                      </span>
+                    </div>
+                  );
+                }
                 return (
                   <div
                     key={item.key}
@@ -82,7 +101,7 @@ function Palette() {
   );
 }
 
-function CanvasInner({ steps, graph, active, onChange }) {
+function CanvasInner({ steps, graph, active, readOnly, onChange }) {
   const { resolvedTheme } = useTheme();
   const { screenToFlowPosition } = useReactFlow();
 
@@ -90,6 +109,8 @@ function CanvasInner({ steps, graph, active, onChange }) {
   const [snap, setSnap] = useState(false);
   const [snapSize, setSnapSize] = useState(SNAP_SIZES[1]);
   const [locked, setLocked] = useState(false);
+  // Read-only freezes the graph for good: pan and zoom only, no palette, no lock toggle.
+  const frozen = locked || readOnly;
 
   // Seeded once per mount; the builder remounts the canvas when the view toggles, so this reflects the latest steps.
   const seeded = useMemo(() => stepsToGraph(steps, graph), []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -158,22 +179,22 @@ function CanvasInner({ steps, graph, active, onChange }) {
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onConnect={onConnect}
-      onDrop={onDrop}
-      onDragOver={onDragOver}
+      onDrop={readOnly ? undefined : onDrop}
+      onDragOver={readOnly ? undefined : onDragOver}
       nodeTypes={nodeTypes}
       colorMode={resolvedTheme === "light" ? "light" : "dark"}
       defaultViewport={seeded.viewport}
       proOptions={{ hideAttribution: true }}
       snapToGrid={snap}
       snapGrid={[snapSize, snapSize]}
-      nodesDraggable={!locked}
-      nodesConnectable={!locked}
-      elementsSelectable={!locked}
+      nodesDraggable={!frozen}
+      nodesConnectable={!frozen}
+      elementsSelectable={!frozen}
       minZoom={0.2}
       maxZoom={2}
       fitView
       fitViewOptions={CANVAS_FIT_VIEW}
-      deleteKeyCode={["Backspace", "Delete"]}
+      deleteKeyCode={readOnly ? null : ["Backspace", "Delete"]}
       className="bg-background"
     >
       {/* Dots follow the snap grid so the snapping step is visible. */}
@@ -183,20 +204,20 @@ function CanvasInner({ steps, graph, active, onChange }) {
         onSnapChange={setSnap}
         snapSize={snapSize}
         onSnapSizeChange={setSnapSize}
-        locked={locked}
-        onLockedChange={setLocked}
+        locked={frozen}
+        onLockedChange={readOnly ? undefined : setLocked}
       />
-      <Palette />
+      {readOnly ? null : <Palette />}
     </ReactFlow>
   );
 }
 
-// `active` animates the edges to show the workflow is live.
-export function WorkflowCanvas({ steps, graph, active, onChange }) {
+// `active` animates the edges to show the workflow is live; `readOnly` allows panning and zooming only.
+export function WorkflowCanvas({ steps, graph, active, readOnly = false, onChange }) {
   return (
     <div className="h-[70vh] w-full overflow-hidden rounded-xl border border-border bg-background">
       <ReactFlowProvider>
-        <CanvasInner steps={steps} graph={graph} active={active} onChange={onChange} />
+        <CanvasInner steps={steps} graph={graph} active={active} readOnly={readOnly} onChange={onChange} />
       </ReactFlowProvider>
     </div>
   );

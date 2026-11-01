@@ -6,18 +6,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AiBadge,
+  Avatar,
   Cap,
   ErrorState,
   FileText,
   HeaderBar,
   LoadingState,
-  Sparkles,
+  ThumbsDown,
   ThumbsUp,
   User,
 } from "./widget_primitives";
 import { Composer } from "./composer";
 
-export function AskSpace({ getApi, config, route, navigate }) {
+export function AskSpace({ getApi, config, route, navigate, postToHost }) {
   // A query carried in on the route (from Home or Help) opens the thread with
   // the question already on screen; the effect below only runs the request.
   const [opening] = useState(() => (route.query ? { id: "t-0", question: route.query } : null));
@@ -76,27 +77,30 @@ export function AskSpace({ getApi, config, route, navigate }) {
 
   return (
     <>
-      <HeaderBar onBack={() => navigate({ space: "home" })}>
-        <div className="gc-avatar" aria-hidden="true">
-          <Sparkles size={14} />
-        </div>
-        <div className="gc-header__ident">
-          <div className="gc-header__identtop">
-            <span className="gc-header__name">{assistant}</span>
+      <HeaderBar
+        onBack={() => navigate({ space: "home" })}
+        onClose={() => postToHost?.("close")}
+        action={
+          <button
+            type="button"
+            className="gc-ghostbtn"
+            onClick={() =>
+              navigate({ space: "messages", compose: true, draft: turns[turns.length - 1]?.question || "" })
+            }
+          >
+            <User />
+            Get a human
+          </button>
+        }
+      >
+        <Avatar ai />
+        <span className="gc-bar__ident">
+          <span className="gc-bar__name">
+            <span className="gc-bar__nametext">{assistant}</span>
             <AiBadge />
-          </div>
-          <span className="gc-header__sub">{pending ? "Thinking…" : "Answers in seconds"}</span>
-        </div>
-        <button
-          type="button"
-          className="gc-ghostbtn"
-          onClick={() =>
-            navigate({ space: "messages", compose: true, draft: turns[turns.length - 1]?.question || "" })
-          }
-        >
-          <User />
-          Get a human
-        </button>
+          </span>
+          <span className="gc-bar__sub">{pending ? "Thinking…" : "Answers in seconds"}</span>
+        </span>
       </HeaderBar>
 
       <div ref={threadRef} className="gc-thread" role="log" aria-label={`Conversation with ${assistant}`}>
@@ -133,7 +137,7 @@ export function AskSpace({ getApi, config, route, navigate }) {
                     onClick={() => setFeedback((f) => ({ ...f, [turn.id]: true }))}
                     aria-label="Helpful"
                   >
-                    <ThumbsUp />
+                    <ThumbsUp size={14} />
                   </button>
                   <button
                     type="button"
@@ -142,7 +146,7 @@ export function AskSpace({ getApi, config, route, navigate }) {
                     onClick={() => setFeedback((f) => ({ ...f, [turn.id]: false }))}
                     aria-label="Not helpful"
                   >
-                    <ThumbsUp />
+                    <ThumbsDown size={14} />
                   </button>
                 </div>
               </>
@@ -166,7 +170,6 @@ export function AskSpace({ getApi, config, route, navigate }) {
       <Composer
         placeholder="Message…"
         note={`${assistant} is an AI assistant. Ask for a person any time.`}
-        allowImages={false}
         sending={pending}
         onSend={ask}
       />
@@ -206,7 +209,7 @@ function AnswerBody({ answer, onOpenArticle }) {
               className="gc-source"
               onClick={() => source.articleId && onOpenArticle(source.articleId)}
             >
-              <FileText />
+              <FileText size={13} />
               {source.title}
             </button>
           ))}

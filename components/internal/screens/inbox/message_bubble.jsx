@@ -1,106 +1,155 @@
 "use client";
 
-// One message in the thread pane: comment | note | ai_agent (spec §4.2).
-// Notes are visually unmistakable — internal-only, never sent to the customer.
+// One thread message (comment | note | ai_agent, spec §4.2); `grouped` drops the header, email replies show delivery, customer messages translate on demand.
 
 import { memo } from "react";
 import { Avatar, AvatarFallback } from "@geiger/ui";
-import { Bot, FileText, StickyNote } from "lucide-react";
+import { AlertCircle, Bot, Check, Clock, FileText, StickyNote } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { MessageTranslation } from "./copilot";
+import { formatBytes, formatClock, initials } from "./constants";
 
-function initials(name) {
-  return (name || "?")
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() || "")
-    .join("");
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function formatTime(dateStr) {
-  const t = new Date(dateStr);
-  if (Number.isNaN(t.getTime())) return "";
-  return t.toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+// Splits a note body so each "@Teammate Name" renders highlighted; a name must end at a non-word char.
+function withMentions(body, names) {
+  const known = (names || []).filter(Boolean).sort((a, b) => b.length - a.length);
+  if (known.length === 0 || !body.includes("@")) return body;
+  const pattern = new RegExp(`(@(?:${known.map(escapeRegExp).join("|")}))(?![\\p{L}\\p{N}_])`, "gu");
+  return body.split(pattern).map((part, i) =>
+    i % 2 === 1 ? (
+      <span key={i} className="font-semibold text-amber-300">
+        {part}
+      </span>
+    ) : (
+      part
+    ),
+  );
 }
 
-export const MessageBubble = memo(function MessageBubble({ message }) {
+export const MessageBubble = memo(function MessageBubble({
+  message,
+  grouped,
+  mentionNames,
+  translatable,
+  translation,
+  aiStatus,
+  onTranslate,
+  onToggleOriginal,
+  onDismissTranslation,
+}) {
   const isNote = message.messageType === "note";
   const isAgent = message.authorRole === "agent";
   const isAi = message.authorRole === "ai_agent";
+  const outbound = isAgent || isAi;
+  const author = message.authorName || (isAi ? "AI Agent" : "Customer");
+  const translated = translation?.state === "ready" && !translation.original;
 
   return (
-    <div className={cn("flex w-full gap-3", isAgent || isAi ? "flex-row-reverse" : "flex-row")}>
-      <Avatar
-        className={cn(
-          "mt-0.5 h-7 w-7 shrink-0",
-          isNote && "opacity-70",
-        )}
-      >
-        <AvatarFallback
-          className={cn(
-            "text-[10px]",
-            isAi && "bg-violet-400/10 text-violet-300",
-            isNote && "bg-surface-hover text-text-secondary",
-          )}
-        >
-          {isAi ? <Bot className="h-3.5 w-3.5" /> : initials(message.authorName)}
-        </AvatarFallback>
-      </Avatar>
+    <div className={cn("flex w-full gap-3", outbound ? "flex-row-reverse" : "flex-row", grouped && "-mt-3.5")}>
+      {grouped ? (
+        <span className="w-7 shrink-0" aria-hidden="true" />
+      ) : (
+        <Avatar className="size-7 shrink-0">
+          <AvatarFallback
+            className={cn(
+              "text-[11px] font-medium text-foreground",
+              isAi ? "bg-violet-400/10 text-violet-300" : outbound ? "bg-surface-strong" : "bg-surface-hover",
+            )}
+          >
+            {isAi ? <Bot className="h-3.5 w-3.5" /> : initials(author)}
+          </AvatarFallback>
+        </Avatar>
+      )}
 
-      <div
-        className={cn(
-          "flex min-w-0 max-w-[78%] flex-col gap-1",
-          isAgent || isAi ? "items-end" : "items-start",
+      <div className={cn("group flex min-w-0 max-w-[min(560px,85%)] flex-col gap-1.5", outbound ? "items-end" : "items-start")}>
+        {grouped ? null : (
+          <div className="flex items-center gap-2">
+            {isNote ? (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-300">
+                <StickyNote className="h-3 w-3" /> Internal note
+              </span>
+            ) : null}
+            <span className="text-[13px] font-semibold text-foreground">{author}</span>
+            <span className="text-xs text-muted-foreground">{formatClock(message.createdAt)}</span>
+          </div>
         )}
-      >
-        <div className="flex items-center gap-1.5 text-[11px] text-text-tertiary">
-          <span className="font-medium text-text-secondary">
-            {message.authorName || (isAi ? "AI Agent" : "Customer")}
-          </span>
-          {isNote ? (
-            <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-400/20 bg-amber-400/10 px-1.5 py-px font-medium text-amber-300">
-              <StickyNote className="h-2.5 w-2.5" /> Internal note
-            </span>
-          ) : null}
-          <span>{formatTime(message.createdAt)}</span>
-        </div>
 
         <div
+          title={grouped ? formatClock(message.createdAt) : undefined}
           className={cn(
-            "whitespace-pre-wrap break-words rounded-xl border px-3 py-2 text-sm leading-relaxed",
+            "whitespace-pre-wrap break-words rounded-xl border px-3.5 py-2.5 text-sm leading-[1.55] text-foreground",
+            outbound ? "rounded-tr-sm" : "rounded-tl-sm",
             isNote
-              ? "border-amber-400/20 bg-amber-400/10 text-foreground"
-              : isAgent
-                ? "border-border bg-primary text-primary-foreground"
-                : "border-border bg-surface-subtle text-foreground",
+              ? "border-amber-400/30 bg-amber-400/[0.08]"
+              : outbound
+                ? "border-transparent bg-surface-strong"
+                : translated
+                  ? "border-violet-400/25 bg-surface-card"
+                  : "border-border bg-surface-card",
           )}
         >
-          {message.body}
+          {isNote ? withMentions(message.body, mentionNames) : translated ? translation.text : message.body}
         </div>
 
+        {translation || (translatable && onTranslate) ? (
+          <MessageTranslation
+            message={message}
+            translation={translation}
+            status={aiStatus}
+            onTranslate={onTranslate}
+            onToggleOriginal={onToggleOriginal}
+            onDismiss={onDismissTranslation}
+          />
+        ) : null}
+
         {(message.attachments || []).length > 0 ? (
-          <div className={cn("flex flex-wrap gap-1.5", isAgent || isAi ? "justify-end" : "")}>
+          <div className={cn("flex flex-wrap gap-1.5", outbound ? "justify-end" : "")}>
             {message.attachments.map((a, i) => (
               <a
                 key={a.url ?? a.path ?? i}
                 href={a.url ?? "#"}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-card px-2 py-1 text-[11px] text-text-secondary transition-colors hover:text-foreground"
+                className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-card px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
               >
                 <FileText className="h-3 w-3" />
                 <span className="max-w-[160px] truncate">{a.name ?? a.path ?? "Attachment"}</span>
+                {a.size ? <span className="shrink-0 text-text-tertiary">{formatBytes(a.size)}</span> : null}
               </a>
             ))}
           </div>
         ) : null}
+
+        {isAgent && !isNote ? <DeliveryStatus delivery={message.delivery} /> : null}
       </div>
     </div>
   );
 });
+
+// Outbound delivery as the sender recorded it; nothing at all when the message carries no delivery record.
+function DeliveryStatus({ delivery }) {
+  if (!delivery) return null;
+  const channel = delivery.channel || "email";
+  const when = delivery.at ? formatClock(delivery.at) : undefined;
+  if (delivery.status === "failed" || delivery.status === "uncertain") {
+    return (
+      <span role="status" title={when} className="inline-flex items-center gap-1 text-xs text-red-400">
+        <AlertCircle className="h-3 w-3 shrink-0" />
+        {delivery.status === "failed" ? "Failed" : "Delivery uncertain"}: {delivery.error || "no reason given"}
+      </span>
+    );
+  }
+  if (delivery.status !== "sent" && delivery.status !== "queued") return null;
+  const sent = delivery.status === "sent";
+  return (
+    <span title={when} className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+      {sent ? <Check className="h-3 w-3 shrink-0" /> : <Clock className="h-3 w-3 shrink-0" />}
+      {sent ? `Sent via ${channel}` : `Queued for ${channel}`}
+    </span>
+  );
+}
 
 export default MessageBubble;

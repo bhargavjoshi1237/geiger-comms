@@ -1,25 +1,34 @@
 "use client";
 
-// Help (spec §9) — article search and reader over published articles only; bodies render through MarkdownView, never raw HTML.
-// Search filters the fetched set locally; the "ask <assistant>" nudge appears only when the server configures an assistant.
+// Help (spec §9) — search, collections and a reader over published articles; bodies render through MarkdownView, never raw HTML.
+// Filters run locally over the fetched set; the "ask <assistant>" nudge appears only when the server configures an assistant.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ArrowUpRight,
+  AiBadge,
+  Avatar,
+  BookOpen,
   Cap,
+  Check,
   ChevronRight,
-  Clock,
+  CloseButton,
+  CreditCard,
   ErrorState,
-  FileText,
+  ExternalLink,
   HeaderBar,
-  initialsOf,
+  Info,
   LoadingState,
+  Plug,
+  Rocket,
   Search,
   Sparkles,
+  ThumbsDown,
   ThumbsUp,
-  X,
+  User,
 } from "./widget_primitives";
 import { MarkdownView } from "./markdown_view";
+
+const POPULAR_COUNT = 5;
 
 // Wraps every case-insensitive hit of `term` in a <mark>.
 function highlight(text, term) {
@@ -41,8 +50,19 @@ function highlight(text, term) {
   return parts.map((p, i) => (typeof p === "string" ? <span key={i}>{p}</span> : <mark key={i}>{p.hit}</mark>));
 }
 
+// A collection's tile icon, guessed from its name; anything unrecognised gets the book.
+function CollectionIcon({ name }) {
+  const n = String(name || "").toLowerCase();
+  if (/bill|pay|invoice|refund|plan|price/.test(n)) return <CreditCard />;
+  if (/account|profile|login|sign|security|password/.test(n)) return <User size={16} />;
+  if (/integrat|api|connect|webhook|app/.test(n)) return <Plug />;
+  if (/start|onboard|setup|set up|basics|welcome/.test(n)) return <Rocket />;
+  return <BookOpen />;
+}
+
 export function HelpSpace({ getApi, config, route, navigate, postToHost, sessionKey }) {
   const assistant = config?.assistantName || "";
+  const close = () => postToHost?.("close");
   if (route.articleId) {
     return (
       <ArticleReader
@@ -51,6 +71,7 @@ export function HelpSpace({ getApi, config, route, navigate, postToHost, session
         sessionKey={sessionKey}
         assistant={assistant}
         onBack={() => navigate({ space: "help" })}
+        onClose={close}
         onAskInstead={() => navigate({ space: "ask" })}
         onMessageTeam={() => navigate({ space: "messages", compose: true })}
       />
@@ -64,13 +85,14 @@ export function HelpSpace({ getApi, config, route, navigate, postToHost, session
       assistant={assistant}
       route={route}
       navigate={navigate}
-      postToHost={postToHost}
+      onClose={close}
     />
   );
 }
 
-function HelpCentre({ getApi, sessionKey, assistant, route, navigate, postToHost }) {
+function HelpCentre({ getApi, sessionKey, assistant, route, navigate, onClose }) {
   const [query, setQuery] = useState(route.query || "");
+  const [collection, setCollection] = useState(null);
   const [rows, setRows] = useState(null);
   const [failed, setFailed] = useState(false);
 
@@ -89,60 +111,53 @@ function HelpCentre({ getApi, sessionKey, assistant, route, navigate, postToHost
     load();
   }, [load, sessionKey]);
 
+  const collections = useMemo(() => {
+    const counts = new Map();
+    for (const a of rows ?? []) {
+      const name = String(a.collectionTitle || "").trim();
+      if (name) counts.set(name, (counts.get(name) || 0) + 1);
+    }
+    return [...counts].map(([name, count]) => ({ name, count }));
+  }, [rows]);
+
+  const q = query.trim().toLowerCase();
   const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
     if (!rows) return [];
-    if (!q) return rows;
-    return rows.filter(
-      (a) =>
+    return rows.filter((a) => {
+      if (collection && String(a.collectionTitle || "").trim() !== collection) return false;
+      if (!q) return true;
+      return (
         String(a.title || "").toLowerCase().includes(q) ||
         String(a.summary || a.body || "").toLowerCase().includes(q) ||
-        String(a.collectionTitle || "").toLowerCase().includes(q),
-    );
-  }, [rows, query]);
+        String(a.collectionTitle || "").toLowerCase().includes(q)
+      );
+    });
+  }, [rows, q, collection]);
+
+  const browsing = !q && !collection;
+  const shown = browsing ? results.slice(0, POPULAR_COUNT) : results;
 
   return (
     <>
       <header className="gc-helphead">
         <div className="gc-helphead__row">
-          <span className="gc-listhead__title">Help centre</span>
-          <button
-            type="button"
-            className="gc-iconbtn gc-iconbtn--sm"
-            onClick={() => postToHost?.("close")}
-            aria-label="Close messenger"
-          >
-            <X />
-          </button>
+          <h1 className="gc-pagehead__title">Help centre</h1>
+          <CloseButton onClose={onClose} />
         </div>
-        <div className="gc-search" style={{ marginTop: 0 }}>
-          <Search className="gc-search__icon" />
+        <label className="gc-search">
+          <Search />
+          <span className="gc-sr">Search articles</span>
           <input
             type="search"
             className="gc-search__input"
             value={query}
-            placeholder="Search for help"
-            aria-label="Search the help centre"
+            placeholder="Search articles"
             onChange={(e) => setQuery(e.target.value)}
           />
-        </div>
+        </label>
       </header>
 
-      <div className="gc-panel__body" style={{ padding: "12px 0" }}>
-        {assistant ? (
-          <button type="button" className="gc-suggest" onClick={() => navigate({ space: "ask", query })}>
-            <Sparkles size={15} className="gc-suggest__icon" />
-            <div className="gc-suggest__body">
-              <p className="gc-suggest__title">Ask {assistant} instead</p>
-              <p className="gc-suggest__desc">{assistant} is our AI assistant and answers in seconds.</p>
-            </div>
-            <ChevronRight
-              size={14}
-              style={{ color: "var(--gc-text-tertiary)", flex: "none", marginTop: 3 }}
-            />
-          </button>
-        ) : null}
-
+      <div className="gc-panel__body gc-help">
         {rows === null && !failed ? (
           <LoadingState label="Loading articles…" />
         ) : failed ? (
@@ -154,54 +169,115 @@ function HelpCentre({ getApi, sessionKey, assistant, route, navigate, postToHost
               load();
             }}
           />
-        ) : results.length === 0 ? (
-          <div className="gc-state">
-            <p className="gc-state__title">{query ? "No matches" : "No articles yet"}</p>
-            {query ? (
-              <p className="gc-state__hint">
-                Try a different search{assistant ? ` — or ask ${assistant} instead` : " — or message the team"}.
-              </p>
-            ) : null}
-          </div>
         ) : (
           <>
-            <div style={{ padding: "0 14px 6px" }}>
-              <Cap>
-                {results.length} {results.length === 1 ? "article" : "articles"}
-              </Cap>
-            </div>
+            {browsing && collections.length ? (
+              <section className="gc-section">
+                <div className="gc-section__head">
+                  <Cap>Collections</Cap>
+                </div>
+                <div className="gc-collections">
+                  {collections.map((c) => (
+                    <button
+                      key={c.name}
+                      type="button"
+                      className="gc-collection"
+                      onClick={() => setCollection(c.name)}
+                    >
+                      <span className="gc-collection__tile" aria-hidden="true">
+                        <CollectionIcon name={c.name} />
+                      </span>
+                      <span className="gc-collection__text">
+                        <span className="gc-collection__name">{c.name}</span>
+                        <span className="gc-collection__count">
+                          {c.count} {c.count === 1 ? "article" : "articles"}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
 
-            {results.map((a) => (
-              <button
-                key={a.id}
-                type="button"
-                className="gc-article-row"
-                onClick={() => navigate({ space: "help", articleId: a.id })}
-              >
-                <FileText size={14} className="gc-article-row__icon" />
-                <span style={{ minWidth: 0 }}>
-                  <span className="gc-article-row__title">{highlight(a.title, query)}</span>
-                  <span className="gc-article-row__desc">{a.summary || a.body}</span>
-                  <span className="gc-article-row__meta">
-                    {(a.collectionTitle || "Help").toUpperCase()}
-                    {a.readMinutes ? ` · ${a.readMinutes} MIN READ` : ""}
-                  </span>
+            {assistant && q ? (
+              <button type="button" className="gc-linkcard" onClick={() => navigate({ space: "ask", query })}>
+                <span className="gc-linkcard__tile" aria-hidden="true">
+                  <Sparkles size={16} />
                 </span>
+                <span className="gc-linkcard__text">
+                  <span className="gc-linkcard__title">
+                    Ask {assistant} instead
+                    <AiBadge />
+                  </span>
+                  <span className="gc-linkcard__sub">{assistant} is our AI assistant and answers in seconds.</span>
+                </span>
+                <ChevronRight className="gc-linkcard__chev" />
               </button>
-            ))}
+            ) : null}
+
+            <section className="gc-section">
+              <div className="gc-section__head">
+                <Cap>
+                  {browsing
+                    ? "Popular"
+                    : collection && !q
+                      ? collection
+                      : `${results.length} ${results.length === 1 ? "result" : "results"}`}
+                </Cap>
+                {collection ? (
+                  <button type="button" className="gc-link" onClick={() => setCollection(null)}>
+                    All articles
+                  </button>
+                ) : null}
+              </div>
+
+              {shown.length === 0 ? (
+                <div className="gc-state gc-state--inline">
+                  <p className="gc-state__title">{q ? "No matches" : "No articles yet"}</p>
+                  {q ? (
+                    <p className="gc-state__hint">
+                      Try a different search{assistant ? `, or ask ${assistant} instead` : ", or message the team"}.
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="gc-articles">
+                  {shown.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      className="gc-article-row"
+                      onClick={() => navigate({ space: "help", articleId: a.id })}
+                    >
+                      <span className="gc-article-row__body">
+                        <span className="gc-article-row__title">{highlight(a.title, query)}</span>
+                        {q && (a.summary || a.body) ? (
+                          <span className="gc-article-row__desc">{a.summary || a.body}</span>
+                        ) : null}
+                        <span className="gc-article-row__meta">
+                          {a.collectionTitle || "Help"}
+                          {a.readMinutes ? ` · ${a.readMinutes} min read` : ""}
+                        </span>
+                      </span>
+                      <ChevronRight className="gc-article-row__chev" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
           </>
         )}
-      </div>
 
-      <div className="gc-panel__footer gc-helpfoot">
-        <span className="gc-helpfoot__text">Can&rsquo;t find it?</span>
-        <button
-          type="button"
-          className="gc-primarybtn"
-          onClick={() => navigate({ space: "messages", compose: true })}
-        >
-          Message the team
-        </button>
+        <div className="gc-helpcta">
+          <span className="gc-helpcta__text">Can&rsquo;t find what you need?</span>
+          <button
+            type="button"
+            className="gc-btn gc-btn--outline gc-btn--sm"
+            onClick={() => navigate({ space: "messages", compose: true })}
+          >
+            Message the team
+          </button>
+        </div>
       </div>
     </>
   );
@@ -215,15 +291,15 @@ function relativeDay(iso) {
     if (days < 1) return "today";
     if (days < 2) return "yesterday";
     if (days < 7) return `${days} days ago`;
-    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+    return d.toLocaleDateString([], { day: "numeric", month: "short" });
   } catch {
     return "recently";
   }
 }
 
-function ArticleReader({ articleId, getApi, sessionKey, assistant, onBack, onAskInstead, onMessageTeam }) {
+function ArticleReader({ articleId, getApi, sessionKey, assistant, onBack, onClose, onAskInstead, onMessageTeam }) {
   const [state, setState] = useState({ status: "loading", article: null });
-  const [feedback, setFeedback] = useState(null);
+  const [vote, setVote] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -240,34 +316,39 @@ function ArticleReader({ articleId, getApi, sessionKey, assistant, onBack, onAsk
   }, [articleId, getApi, sessionKey]);
 
   const article = state.article;
+  const href = typeof article?.url === "string" && /^https?:\/\//i.test(article.url) ? article.url : null;
 
   return (
     <>
       <HeaderBar
         onBack={onBack}
+        backLabel="Back to help centre"
+        onClose={onClose}
         action={
-          article?.url ? (
+          href ? (
             <a
-              className="gc-iconbtn gc-iconbtn--sm"
-              href={article.url}
+              className="gc-iconbtn"
+              href={href}
               target="_blank"
               rel="noopener noreferrer nofollow"
-              aria-label="Open in help centre"
+              aria-label="Open article in a new tab"
             >
-              <ArrowUpRight />
+              <ExternalLink />
             </a>
           ) : null
         }
       >
-        <span className="gc-header__eyebrow">{(article?.collectionTitle || "Article").toUpperCase()}</span>
+        <span className="gc-bar__crumb">
+          Help centre{article?.collectionTitle ? ` / ${article.collectionTitle}` : ""}
+        </span>
       </HeaderBar>
 
       {state.status === "loading" ? (
-        <div className="gc-panel__body">
+        <div className="gc-panel__body gc-panel__body--stack">
           <LoadingState label="Loading article…" />
         </div>
       ) : state.status === "failed" ? (
-        <div className="gc-panel__body">
+        <div className="gc-panel__body gc-panel__body--stack">
           <ErrorState
             title="Article not found"
             hint="It may have been moved or unpublished."
@@ -278,64 +359,61 @@ function ArticleReader({ articleId, getApi, sessionKey, assistant, onBack, onAsk
       ) : (
         <>
           <article className="gc-article">
-            <h2>{article.title}</h2>
-            <div className="gc-article__byline">
+            <h1 className="gc-article__title">{article.title}</h1>
+            <div className="gc-byline">
               {article.authorName ? (
-                <div className="gc-avatar gc-avatar--xs" aria-hidden="true">
-                  {initialsOf(article.authorName)}
-                </div>
+                <>
+                  <Avatar name={article.authorName} size="xs" />
+                  <span className="gc-byline__name">{article.authorName}</span>
+                  <span className="gc-byline__dot" aria-hidden="true" />
+                </>
               ) : null}
-              <span>
-                {article.authorName ? `${article.authorName.toUpperCase()} · ` : ""}UPDATED{" "}
-                {relativeDay(article.updatedAt).toUpperCase()}
-              </span>
+              <span className="gc-byline__date">Updated {relativeDay(article.updatedAt)}</span>
             </div>
-            <div className="gc-article__divider" />
+            <hr className="gc-article__rule" />
 
-            <div className="gc-article__p">
-              <MarkdownView text={article.body} />
-            </div>
+            <MarkdownView text={article.body} variant="article" className="gc-prose" />
 
             {article.callout ? (
               <aside className="gc-callout">
-                <Clock />
+                <Info />
                 <p>{article.callout}</p>
               </aside>
             ) : null}
           </article>
 
-          <footer className="gc-panel__footer gc-articlefoot">
-            <div className="gc-articlefoot__row">
-              <span className="gc-articlefoot__label">Did this answer your question?</span>
-              <div className="gc-articlefoot__thumbs">
-                <button
-                  type="button"
-                  className="gc-thumb gc-thumb--up"
-                  aria-pressed={feedback === "up"}
-                  onClick={() => setFeedback("up")}
-                  aria-label="Yes"
-                >
-                  <ThumbsUp size={13} />
+          <footer className="gc-articlefoot">
+            {vote === null ? (
+              <>
+                <span className="gc-articlefoot__q">Did this answer your question?</span>
+                <button type="button" className="gc-vote" onClick={() => setVote("up")} aria-label="Yes, it helped">
+                  <ThumbsUp />
                 </button>
                 <button
                   type="button"
-                  className="gc-thumb gc-thumb--down"
-                  aria-pressed={feedback === "down"}
-                  onClick={() => setFeedback("down")}
-                  aria-label="No"
+                  className="gc-vote"
+                  onClick={() => setVote("down")}
+                  aria-label="No, it didn't help"
                 >
-                  <ThumbsUp size={13} />
+                  <ThumbsDown />
                 </button>
-              </div>
-            </div>
-            {assistant ? (
-              <button type="button" className="gc-outlinebtn" onClick={onAskInstead}>
-                Ask {assistant} instead
-              </button>
+              </>
+            ) : vote === "up" ? (
+              <span className="gc-articlefoot__q gc-articlefoot__thanks" role="status">
+                <Check />
+                Thanks for letting us know.
+              </span>
             ) : (
-              <button type="button" className="gc-outlinebtn" onClick={onMessageTeam}>
-                Still need help? Message the team
-              </button>
+              <>
+                <span className="gc-articlefoot__sorry">Sorry about that.</span>
+                <button
+                  type="button"
+                  className="gc-btn gc-btn--accent gc-btn--md"
+                  onClick={assistant ? onAskInstead : onMessageTeam}
+                >
+                  {assistant ? `Ask ${assistant}` : "Message the team"}
+                </button>
+              </>
             )}
           </footer>
         </>

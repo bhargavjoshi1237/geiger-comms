@@ -79,15 +79,18 @@ export function ZoomControls({
           {snapSize}
         </button>
 
-        <button
-          type="button"
-          aria-label={locked ? "Unlock canvas" : "Lock canvas"}
-          aria-pressed={locked}
-          onClick={() => onLockedChange(!locked)}
-          className={cn(BTN, "border-t border-border-strong", locked && ON)}
-        >
-          {locked ? <Lock className="h-4 w-4" /> : <LockOpen className="h-4 w-4" />}
-        </button>
+        {/* No onLockedChange means the canvas is read-only, so there is nothing to unlock. */}
+        {onLockedChange ? (
+          <button
+            type="button"
+            aria-label={locked ? "Unlock canvas" : "Lock canvas"}
+            aria-pressed={locked}
+            onClick={() => onLockedChange(!locked)}
+            className={cn(BTN, "border-t border-border-strong", locked && ON)}
+          >
+            {locked ? <Lock className="h-4 w-4" /> : <LockOpen className="h-4 w-4" />}
+          </button>
+        ) : null}
       </div>
     </Panel>
   );
