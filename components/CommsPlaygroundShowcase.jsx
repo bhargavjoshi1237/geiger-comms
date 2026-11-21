@@ -1,58 +1,28 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { LogoLoading } from "@geiger/ui";
+import { cn } from "@/lib/utils";
+import styles from "@/components/landing/kit/product_pages.module.css";
 
-const CommsPlayground = dynamic(
-  () =>
-    import("@/components/CommsPlayground").then((mod) => mod.CommsPlayground),
-  { ssr: false },
-);
+const CommsPlayground = dynamic(() => import("@/components/CommsPlayground").then((mod) => mod.CommsPlayground), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full items-center justify-center">
+      <LogoLoading size={56} />
+    </div>
+  ),
+});
 
-// Framed, interactive product preview for the landing page: intro copy + CTA
-// over a background image, with the live Comms workspace running below in its
-// own bordered, fixed-height card.
-export default function CommsPlaygroundShowcase({
-  ctaHref = "/project",
-  ctaLabel = "Open the workspace",
-  backgroundImage,
-}) {
+// The live Comms workspace on the landing page, framed like the page's other stages: every screen runs in place, nothing is saved.
+export default function CommsPlaygroundShowcase({ className }) {
   return (
-    <section
-      className="rounded-2xl border mx-auto w-[80%] border-border p-3 sm:rounded-3xl sm:p-6 md:p-8 xl:p-10 relative overflow-hidden bg-cover bg-center bg-no-repeat"
-      style={backgroundImage ? { backgroundImage: `url('${backgroundImage}')` } : undefined}
-    >
-      <div className="absolute inset-0 bg-[#080808]/75" />
-      <div className="relative z-10 flex flex-col gap-6 sm:gap-10">
-        <div className="space-y-5">
-          <div className="mx-auto mb-4 mt-4 flex w-[92%] flex-col items-start gap-4 sm:mb-6 sm:mt-6 sm:w-[90%]">
-            <h3 className="text-3xl font-semibold leading-tight text-white">
-              Try the full support inbox in real time.
-            </h3>
-
-            <p className="max-w-lg text-[#bcbcbc]">
-              This playground runs live on the page with the complete workspace —
-              sidebar navigation, the shared inbox, and every screen. No save and
-              no load, just pure exploration.
-            </p>
-
-            <Link
-              href={ctaHref}
-              className="inline-flex h-10 items-center gap-2 rounded-full bg-zinc-100 px-5 font-medium text-zinc-950 transition-colors hover:bg-white"
-            >
-              {ctaLabel}
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-          </div>
-        </div>
-
-        <div>
-          <div className="h-[720px] overflow-hidden rounded-lg border border-border bg-background sm:h-[700px] lg:h-[900px]">
-            <CommsPlayground />
-          </div>
+    <div className={cn("-mx-4 overflow-hidden border-y border-foreground/[0.08] sm:mx-0 sm:rounded-xl sm:border-0 dark:border-foreground/[0.09]", styles.edge, styles.spotlight, className)}>
+      <div className="px-2 pt-10 pb-2 sm:px-6 sm:pt-16 sm:pb-6">
+        <div className="h-[640px] overflow-hidden rounded-lg border border-foreground/[0.1] bg-background shadow-2xl shadow-black/20 sm:h-[720px] lg:h-[820px]">
+          <CommsPlayground />
         </div>
       </div>
-    </section>
+    </div>
   );
 }

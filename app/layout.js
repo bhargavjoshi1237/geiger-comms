@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 export const metadata = {
   title: "Comms - Geiger Studio",
   description:
-    "One shared inbox for every customer conversation — email, chat, and social. The open-source Intercom alternative.",
+    "A shared inbox for customer conversations, with a Messenger for your site, email replies, Copilot, workflows and a knowledge base.",
 };
 
 export default function RootLayout({ children }) {
