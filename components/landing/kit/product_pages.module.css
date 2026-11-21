@@ -1,0 +1,409 @@
+/* Linear's product-area pages: spotlit stages, hairline grids, a tilted hero render and quiet ambient loops. */
+
+.page {
+  --stage-glow: 11%;
+  --stage-floor: 3%;
+  --edge-from: 10%;
+  --edge-to: 4%;
+}
+
+:global(.dark) .page {
+  --stage-glow: 34%;
+  --stage-floor: 7%;
+  --edge-from: 13%;
+  --edge-to: 4%;
+}
+
+/* A soft light from the top edge of the panel, like a product shot in a studio. */
+.spotlight {
+  background:
+    radial-gradient(64% 58% at 50% -6%, color-mix(in oklab, var(--foreground) var(--stage-glow), transparent), transparent 72%),
+    linear-gradient(to bottom, color-mix(in oklab, var(--foreground) var(--stage-floor), var(--background)), var(--background) 82%);
+}
+
+/* A 1px border that fades from the top-left corner, drawn with a masked pseudo-element so it follows the radius. */
+.edge {
+  position: relative;
+}
+
+.edge::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  padding: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(to bottom right, color-mix(in oklab, var(--foreground) var(--edge-from), transparent), color-mix(in oklab, var(--foreground) var(--edge-to), transparent));
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+}
+
+/* Phones run stages edge to edge, so the frame collapses to a top and bottom hairline. */
+@media (max-width: 639px) {
+  .edge::before {
+    display: none;
+  }
+}
+
+/* Scale a fixed-size composition down to its container in pure CSS: tan(atan2(a, b)) divides two lengths into a number. */
+.fit {
+  container-type: inline-size;
+  width: 100%;
+}
+
+.fitSizer {
+  --s: 1;
+  position: relative;
+  height: var(--h);
+}
+
+.fitInner {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: var(--w);
+  height: var(--h);
+  translate: -50% 0;
+  transform-origin: top center;
+}
+
+@supports (width: calc(1px * tan(atan2(1px, 2px)))) {
+  .fitSizer {
+    --s: min(var(--max, 1), tan(atan2(100cqw, var(--w))));
+    height: calc(var(--h) * var(--s));
+  }
+
+  .fitInner {
+    scale: var(--s);
+  }
+}
+
+@supports not (width: calc(1px * tan(atan2(1px, 2px)))) {
+  .fit {
+    overflow: hidden;
+  }
+}
+
+/* Compositions run off the bottom of their stage and dissolve into the caption strip. */
+.fadeBottom {
+  mask-image: linear-gradient(to bottom, #000 58%, transparent 96%);
+}
+
+.fadeEdges {
+  mask-image: radial-gradient(80% 78% at 50% 42%, #000 52%, transparent 100%);
+}
+
+.fadeRight {
+  mask-image: linear-gradient(to right, #000 62%, transparent);
+}
+
+/* Hero render: the same composition drawn twice, a blurred copy behind and a sharp copy masked to the focal area. */
+.heroArt {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.heroLayer {
+  position: absolute;
+  inset: 0;
+  perspective: 1500px;
+  perspective-origin: 60% 10%;
+}
+
+.heroBlur {
+  filter: blur(5px);
+  opacity: 0.55;
+}
+
+.heroSharp {
+  mask-image: radial-gradient(38% 30% at var(--focus-x, 58%) var(--focus-y, 34%), #000 30%, transparent 100%);
+}
+
+.heroPlane {
+  position: absolute;
+  top: var(--plane-top, 4%);
+  left: var(--plane-left, 30%);
+  width: var(--plane-width, 1180px);
+  transform: var(--plane-transform, rotateX(34deg) rotateY(-8deg) rotateZ(9deg));
+  transform-origin: 30% 0%;
+}
+
+.heroShade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(to top, var(--background) 4%, color-mix(in oklab, var(--background) 82%, transparent) 30%, transparent 62%),
+    linear-gradient(to right, var(--background) 0%, color-mix(in oklab, var(--background) 70%, transparent) 30%, transparent 58%),
+    color-mix(in oklab, var(--background) 30%, transparent);
+}
+
+@media (max-width: 639px) {
+  .heroPlane {
+    --plane-left: 6%;
+    --plane-width: 760px;
+  }
+}
+
+/* Typing caret and typed text for composer renders. */
+.caret {
+  display: inline-block;
+  width: 1.5px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: currentColor;
+}
+
+.typed {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  vertical-align: bottom;
+  interpolate-size: allow-keywords;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .caret {
+    animation: blink 1.1s steps(1) infinite;
+  }
+
+  .typed {
+    width: 0;
+    animation: type var(--type-duration, 2.4s) steps(var(--chars), end) var(--type-delay, 0.6s) forwards;
+  }
+
+  .heroEnter {
+    animation: heroEnter 1.6s cubic-bezier(0.2, 0.7, 0.2, 1) 0.1s both;
+  }
+
+  .blurIn {
+    animation: blurIn 1s cubic-bezier(0.2, 0.7, 0.2, 1) var(--delay, 0s) both;
+  }
+
+  /* Entrance on scroll: compositions rise into place as their section arrives. */
+  @supports (animation-timeline: view()) {
+    .reveal {
+      animation: rise linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 55%;
+    }
+
+    .revealLate {
+      animation: rise linear both;
+      animation-timeline: view();
+      animation-range: entry 20% cover 32%;
+    }
+  }
+
+  .pulse {
+    animation: pulse 2.4s ease-out infinite;
+  }
+
+  .float {
+    animation: float 6s ease-in-out infinite;
+  }
+
+  .dots span {
+    animation: bounce 1.2s ease-in-out infinite;
+  }
+
+  .dots span:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+
+  .dots span:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+
+  .shimmer {
+    background-size: 220% 100%;
+    animation: shimmer 2.8s linear infinite;
+  }
+
+  .flow {
+    stroke-dasharray: 4 6;
+    animation: dash 1.6s linear infinite;
+  }
+
+  .travel {
+    offset-rotate: 0deg;
+    animation: travel var(--travel-duration, 3.2s) cubic-bezier(0.45, 0, 0.55, 1) var(--travel-delay, 0s) infinite;
+  }
+
+  .wave {
+    animation: wave 3.6s linear infinite;
+  }
+
+  .popIn {
+    animation: popIn 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.2) var(--pop-delay, 0s) both;
+  }
+
+  .cycle {
+    animation: cycle var(--cycle-duration, 9s) ease-in-out var(--cycle-delay, 0s) infinite both;
+  }
+
+  .marquee {
+    animation: marquee var(--marquee-duration, 40s) linear infinite;
+  }
+
+  .fill {
+    animation: fill var(--fill-duration, 2.4s) cubic-bezier(0.3, 0.7, 0.2, 1) var(--fill-delay, 0.4s) both;
+  }
+}
+
+@keyframes heroEnter {
+  from {
+    opacity: 0;
+    scale: 1.04;
+  }
+}
+
+@keyframes blurIn {
+  from {
+    opacity: 0;
+    filter: blur(10px);
+    translate: 0 10px;
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* Typed text grows to its own width, so the caret lands right after the last letter in a proportional face. */
+@keyframes type {
+  to {
+    width: max-content;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    translate: 0 40px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, currentColor 45%, transparent);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+
+@keyframes float {
+  50% {
+    translate: 0 -6px;
+  }
+}
+
+@keyframes bounce {
+  0%,
+  60%,
+  100% {
+    translate: 0 0;
+    opacity: 0.45;
+  }
+  30% {
+    translate: 0 -3px;
+    opacity: 1;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+
+@keyframes dash {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
+@keyframes travel {
+  0% {
+    offset-distance: 0%;
+    opacity: 0;
+  }
+  12%,
+  88% {
+    opacity: 1;
+  }
+  100% {
+    offset-distance: 100%;
+    opacity: 0;
+  }
+}
+
+@keyframes wave {
+  to {
+    translate: -50% 0;
+  }
+}
+
+@keyframes popIn {
+  from {
+    opacity: 0;
+    scale: 0.92;
+    translate: 0 6px;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+    translate: 0 0;
+  }
+}
+
+/* Visible for the first stretch of each cycle, then out; staggered delays turn a stack into a sequence. */
+@keyframes cycle {
+  0%,
+  4% {
+    opacity: 0;
+    translate: 0 8px;
+  }
+  10%,
+  80% {
+    opacity: 1;
+    translate: 0 0;
+  }
+  88%,
+  100% {
+    opacity: 0;
+    translate: 0 -4px;
+  }
+}
+
+@keyframes marquee {
+  to {
+    translate: -50% 0;
+  }
+}
+
+@keyframes fill {
+  from {
+    scale: 0 1;
+  }
+}
